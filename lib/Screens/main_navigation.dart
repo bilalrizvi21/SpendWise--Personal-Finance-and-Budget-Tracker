@@ -7,6 +7,8 @@ import '../Providers/budget_provider.dart';
 import '../Providers/goal_provider.dart';
 import '../Providers/ai_insights_provider.dart';
 import '../Providers/user_provider.dart';
+import '../Providers/recurring_transaction_provider.dart';
+import '../Services/notification_service.dart';
 import 'dashboard/dashboard_page.dart';
 import 'transactions/transactions_page.dart';
 import 'budget/budget_planner_page.dart';
@@ -34,14 +36,26 @@ class MainNavigationPageState extends State<MainNavigationPage> {
   }
 
   Future<void> _initializeData() async {
+    // Initialize notifications first
+    await NotificationService.instance.initialize();
+
+    // Load all core data in parallel
     await Future.wait([
-      // ✅ Now initializes user so name/prefs load from shared_preferences
       context.read<UserProvider>().initializeUser(),
       context.read<TransactionProvider>().loadTransactions(),
       context.read<BudgetProvider>().loadBudgets(),
       context.read<GoalProvider>().loadGoals(),
       context.read<AIInsightsProvider>().generateInsights(),
+      context.read<RecurringTransactionProvider>().loadRecurring(),
     ]);
+
+    // ✅ After everything is loaded, process any due recurring transactions
+    // This runs silently — notifications will fire for each processed item
+    if (mounted) {
+      await context.read<RecurringTransactionProvider>().processDueTransactions(
+        context,
+      );
+    }
   }
 
   final List<Widget> _pages = const [
@@ -134,10 +148,7 @@ class MainNavigationPageState extends State<MainNavigationPage> {
             fontSize: 12,
             fontWeight: FontWeight.w600,
           ),
-          unselectedLabelStyle: const TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.normal,
-          ),
+          unselectedLabelStyle: const TextStyle(fontSize: 12),
           elevation: 0,
           backgroundColor: Colors.transparent,
           items: _navItems.map((item) {

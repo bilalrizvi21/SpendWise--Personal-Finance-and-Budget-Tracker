@@ -5,6 +5,7 @@ import 'package:spendwise_2/Providers/budget_provider.dart';
 import 'package:spendwise_2/Providers/goal_provider.dart';
 import 'package:spendwise_2/Providers/transaction_provider.dart';
 import 'package:spendwise_2/Providers/user_provider.dart';
+import 'package:spendwise_2/Providers/recurring_transaction_provider.dart';
 import 'Core/constants/app_theme.dart';
 import 'Core/constants/app_strings.dart';
 import 'Screens/main_navigation.dart';
@@ -23,6 +24,7 @@ class SpendWiseApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => BudgetProvider()),
         ChangeNotifierProvider(create: (_) => GoalProvider()),
         ChangeNotifierProvider(create: (_) => AIInsightsProvider()),
+        ChangeNotifierProvider(create: (_) => RecurringTransactionProvider()),
       ],
       child: Consumer<UserProvider>(
         builder: (context, userProvider, child) {
@@ -51,7 +53,6 @@ class SpendWiseApp extends StatelessWidget {
   }
 }
 
-/// Decides whether to show the lock screen or the main app
 class _AppEntry extends StatefulWidget {
   const _AppEntry({Key? key}) : super(key: key);
 
@@ -76,7 +77,6 @@ class _AppEntryState extends State<_AppEntry> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  // Re-lock when app comes back from background
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
@@ -92,14 +92,11 @@ class _AppEntryState extends State<_AppEntry> with WidgetsBindingObserver {
     });
   }
 
-  void _onUnlocked() {
-    setState(() => _isLocked = false);
-  }
+  void _onUnlocked() => setState(() => _isLocked = false);
 
   @override
   Widget build(BuildContext context) {
     if (!_checkDone) {
-      // Splash while checking lock status
       return const Scaffold(
         backgroundColor: Color(0xFF0F0F1E),
         body: Center(

@@ -4,9 +4,9 @@ import '../Models/transaction.dart' as model;
 import '../Models/budget.dart';
 import '../Models/goal.dart';
 import '../Models/category.dart';
+import '../Models/recurring_transaction.dart';
 import 'package:flutter/material.dart';
 
-/// Database Service - Manages all database operations
 class DatabaseService {
   static final DatabaseService instance = DatabaseService._init();
   static Database? _database;
@@ -26,7 +26,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
       onOpen: (db) => print('✅ Database opened successfully!'),
@@ -87,6 +87,23 @@ class DatabaseService {
       )
     ''');
 
+    await db.execute('''
+      CREATE TABLE recurring_transactions (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        amount REAL NOT NULL,
+        category TEXT NOT NULL,
+        type TEXT NOT NULL,
+        paymentMethod TEXT NOT NULL,
+        dayOfMonth INTEGER NOT NULL,
+        nextDueDate TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT,
+        isActive INTEGER NOT NULL DEFAULT 1,
+        notes TEXT
+      )
+    ''');
+
     print('✅ All database tables created successfully!');
   }
 
@@ -135,6 +152,25 @@ class DatabaseService {
         )
       ''');
       print('✅ Upgraded to v4 — custom_categories table added');
+    }
+    if (oldVersion < 5) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS recurring_transactions (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          amount REAL NOT NULL,
+          category TEXT NOT NULL,
+          type TEXT NOT NULL,
+          paymentMethod TEXT NOT NULL,
+          dayOfMonth INTEGER NOT NULL,
+          nextDueDate TEXT NOT NULL,
+          createdAt TEXT NOT NULL,
+          updatedAt TEXT,
+          isActive INTEGER NOT NULL DEFAULT 1,
+          notes TEXT
+        )
+      ''');
+      print('✅ Upgraded to v5 — recurring_transactions table added');
     }
   }
 
@@ -473,6 +509,101 @@ class DatabaseService {
       return count;
     } catch (e) {
       print('❌ Error in deleteCustomCategory: $e');
+      rethrow;
+    }
+  }
+
+  // ========== RECURRING TRANSACTIONS CRUD ==========
+
+  Future<int> createRecurringTransaction(RecurringTransaction recurring) async {
+    try {
+      final db = await database;
+      final id = await db.insert(
+        'recurring_transactions',
+        recurring.toJson(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      print('✅ Recurring transaction created: ${recurring.name}');
+      return id;
+    } catch (e) {
+      print('❌ Error in createRecurringTransaction: $e');
+      rethrow;
+    }
+  }
+
+  Future<List<RecurringTransaction>> getAllRecurringTransactions() async {
+    try {
+      final db = await database;
+      final result = await db.query(
+        'recurring_transactions',
+        where: 'isActive = ?',
+        whereArgs: [1],
+        orderBy: 'dayOfMonth ASC',
+      );
+      print('📖 Loaded ${result.length} recurring transactions');
+      return result.map((map) => RecurringTransaction.fromJson(map)).toList();
+    } catch (e) {
+      print('❌ Error in getAllRecurringTransactions: $e');
+      return [];
+    }
+  }
+
+  /// Get all recurring transactions that are due today or overdue
+  Future<List<RecurringTransaction>> getDueRecurringTransactions() async {
+    try {
+      final db = await database;
+      final now = DateTime.now();
+      final today = DateTime(
+        now.year,
+        now.month,
+        now.day,
+        23,
+        59,
+        59,
+      ).toIso8601String();
+
+      final result = await db.query(
+        'recurring_transactions',
+        where: 'isActive = ? AND nextDueDate <= ?',
+        whereArgs: [1, today],
+      );
+      print('📅 Found ${result.length} due recurring transactions');
+      return result.map((map) => RecurringTransaction.fromJson(map)).toList();
+    } catch (e) {
+      print('❌ Error in getDueRecurringTransactions: $e');
+      return [];
+    }
+  }
+
+  Future<int> updateRecurringTransaction(RecurringTransaction recurring) async {
+    try {
+      final db = await database;
+      final count = await db.update(
+        'recurring_transactions',
+        recurring.toJson(),
+        where: 'id = ?',
+        whereArgs: [recurring.id],
+      );
+      print('✅ Recurring transaction updated: ${recurring.name}');
+      return count;
+    } catch (e) {
+      print('❌ Error in updateRecurringTransaction: $e');
+      rethrow;
+    }
+  }
+
+  Future<int> deleteRecurringTransaction(String id) async {
+    try {
+      final db = await database;
+      final count = await db.delete(
+        'recurring_transactions',
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      print('🗑️ Recurring transaction deleted: $id');
+      return count;
+    } catch (e) {
+      print('❌ Error in deleteRecurringTransaction: $e');
       rethrow;
     }
   }
