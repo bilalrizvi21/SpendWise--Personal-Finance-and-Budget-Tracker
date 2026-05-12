@@ -82,126 +82,119 @@ class BudgetPlannerPage extends StatelessWidget {
   // ========== SUMMARY CARD ==========
 
   Widget _buildSummaryCard(List<Budget> budgets, BudgetSummary summary) {
+    final spentPercentage = summary.totalLimit > 0
+        ? (summary.totalUsed / summary.totalLimit).clamp(0.0, 1.0)
+        : 0.0;
+
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFFFA8BFF), Color(0xFF2BD2FF), Color(0xFF2BFF88)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        color: const Color(0xFF121A32),
         borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withOpacity(0.06)),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFFFA8BFF).withOpacity(0.3),
+            color: Colors.black.withOpacity(0.25),
             blurRadius: 20,
-            offset: const Offset(0, 10),
+            offset: const Offset(0, 8),
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Monthly Budget',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
+          // Donut Progress
+          SizedBox(
+            height: 90,
+            width: 90,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                SizedBox(
+                  height: 90,
+                  width: 90,
+                  child: CircularProgressIndicator(
+                    value: spentPercentage,
+                    strokeWidth: 9,
+                    backgroundColor: Colors.white.withOpacity(0.08),
+                    valueColor: const AlwaysStoppedAnimation(Color(0xFF29D9FF)),
+                  ),
                 ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
+
+                Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      '${(spentPercentage * 100).toInt()}%',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const Text(
+                      'Used',
+                      style: TextStyle(color: Colors.white54, fontSize: 10),
+                    ),
+                  ],
                 ),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(20),
+              ],
+            ),
+          ),
+
+          const SizedBox(width: 18),
+
+          // Right Side
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Monthly Budget',
+                  style: TextStyle(color: Colors.white70, fontSize: 13),
                 ),
-                child: Text(
-                  '${budgets.length} Categories',
+
+                const SizedBox(height: 4),
+
+                Text(
+                  CurrencyFormatter.formatCompact(summary.totalLimit),
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(
-                child: _buildSummaryItem(
-                  'Total Limit',
-                  CurrencyFormatter.formatCompact(summary.totalLimit),
-                  Icons.account_balance_wallet,
+
+                const SizedBox(height: 6),
+
+                Text(
+                  'Spent ${CurrencyFormatter.formatCompact(summary.totalUsed)}',
+                  style: const TextStyle(color: Colors.white60, fontSize: 12),
                 ),
-              ),
-              Container(
-                height: 50,
-                width: 1,
-                color: Colors.white.withOpacity(0.3),
-              ),
-              Expanded(
-                child: _buildSummaryItem(
-                  'Total Used',
-                  CurrencyFormatter.formatCompact(summary.totalUsed),
-                  Icons.trending_down,
-                ),
-              ),
-              Container(
-                height: 50,
-                width: 1,
-                color: Colors.white.withOpacity(0.3),
-              ),
-              Expanded(
-                child: _buildSummaryItem(
-                  'Remaining',
-                  CurrencyFormatter.formatCompact(summary.totalRemaining),
-                  Icons.savings,
-                ),
-              ),
-            ],
-          ),
-          // Status row
-          if (summary.exceededBudgets > 0 || summary.warningBudgets > 0) ...[
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(
-                    Icons.warning_amber_rounded,
-                    color: Colors.white,
-                    size: 16,
+
+                const SizedBox(height: 10),
+
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
                   ),
-                  const SizedBox(width: 6),
-                  Text(
-                    summary.exceededBudgets > 0
-                        ? '${summary.exceededBudgets} budget(s) exceeded!'
-                        : '${summary.warningBudgets} budget(s) near limit',
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF29D9FF).withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '${budgets.length} Categories',
                     style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
+                      color: Color(0xFF29D9FF),
+                      fontSize: 11,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
+          ),
         ],
       ),
     );
@@ -210,19 +203,19 @@ class BudgetPlannerPage extends StatelessWidget {
   Widget _buildSummaryItem(String label, String value, IconData icon) {
     return Column(
       children: [
-        Icon(icon, color: Colors.white, size: 20),
+        Icon(icon, color: Colors.white70, size: 18),
         const SizedBox(height: 4),
         Text(
           value,
           style: const TextStyle(
             color: Colors.white,
-            fontSize: 18,
+            fontSize: 14,
             fontWeight: FontWeight.bold,
           ),
         ),
         Text(
           label,
-          style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 11),
+          style: const TextStyle(color: Colors.white54, fontSize: 10),
           textAlign: TextAlign.center,
         ),
       ],

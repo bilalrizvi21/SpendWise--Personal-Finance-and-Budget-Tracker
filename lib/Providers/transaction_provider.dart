@@ -22,35 +22,57 @@ class TransactionProvider extends ChangeNotifier {
   List<Transaction> get expenseTransactions =>
       _transactions.where((t) => t.isExpense).toList();
 
+  /// Returns transactions whose date falls within [startDate, endDate] inclusive.
+  /// Compares only the date portion (year, month, day) — not the time component.
+  /// This fixes the "today shows yesterday" bug caused by the old isAfter/isBefore
+  /// logic which was off by one day.
   List<Transaction> getTransactionsByDateRange(
     DateTime startDate,
     DateTime endDate,
   ) {
+    // Normalise both bounds to midnight so time-of-day never affects comparison
+    final start = DateTime(startDate.year, startDate.month, startDate.day);
+    final end = DateTime(endDate.year, endDate.month, endDate.day, 23, 59, 59);
+
     return _transactions.where((t) {
-      return t.date.isAfter(startDate.subtract(const Duration(days: 1))) &&
-          t.date.isBefore(endDate.add(const Duration(days: 1)));
+      final txDate = DateTime(t.date.year, t.date.month, t.date.day);
+      return !txDate.isBefore(start) && !txDate.isAfter(end);
     }).toList();
   }
 
+  // ── Today: exactly today's date ──
   List<Transaction> get todayTransactions {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-    final tomorrow = today.add(const Duration(days: 1));
-    return getTransactionsByDateRange(today, tomorrow);
+    return getTransactionsByDateRange(today, today); // same start and end
   }
 
+  // ── This week: Monday → Sunday of the current week ──
   List<Transaction> get thisWeekTransactions {
     final now = DateTime.now();
-    final startOfWeek = now.subtract(Duration(days: now.weekday - 1));
+    final startOfWeek = DateTime(
+      now.year,
+      now.month,
+      now.day - (now.weekday - 1),
+    );
     final endOfWeek = startOfWeek.add(const Duration(days: 6));
     return getTransactionsByDateRange(startOfWeek, endOfWeek);
   }
 
+  // ── This month: 1st → last day of current month ──
   List<Transaction> get thisMonthTransactions {
     final now = DateTime.now();
     final startOfMonth = DateTime(now.year, now.month, 1);
     final endOfMonth = DateTime(now.year, now.month + 1, 0);
     return getTransactionsByDateRange(startOfMonth, endOfMonth);
+  }
+
+  // ── Custom range ──
+  List<Transaction> getTransactionsForCustomRange(
+    DateTime start,
+    DateTime end,
+  ) {
+    return getTransactionsByDateRange(start, end);
   }
 
   TransactionSummary getTransactionSummary({
@@ -113,7 +135,6 @@ class TransactionProvider extends ChangeNotifier {
         .toList();
   }
 
-  // ── Add (saves to DB + syncs budget) ──
   Future<void> addTransaction(
     Transaction transaction, {
     BuildContext? context,
@@ -144,8 +165,6 @@ class TransactionProvider extends ChangeNotifier {
     }
   }
 
-  /// Called by RecurringTransactionProvider after it has already saved
-  /// the transaction to DB — just adds to in-memory list.
   void addTransactionToList(Transaction transaction) {
     _transactions.add(transaction);
     _transactions.sort((a, b) => b.date.compareTo(a.date));
