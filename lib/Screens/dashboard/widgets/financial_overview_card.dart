@@ -177,7 +177,7 @@ class FinancialOverviewCard extends StatelessWidget {
                               CurrencyFormatter.formatCompact(totalIncome),
                               style: const TextStyle(
                                 color: Colors.white,
-                                fontSize: 20,
+                                fontSize: 19,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
@@ -233,7 +233,7 @@ class FinancialOverviewCard extends StatelessWidget {
                               CurrencyFormatter.formatCompact(totalExpenses),
                               style: const TextStyle(
                                 color: Colors.white,
-                                fontSize: 20,
+                                fontSize: 19,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),

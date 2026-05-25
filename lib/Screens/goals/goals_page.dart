@@ -187,11 +187,13 @@ class GoalsPage extends StatelessWidget {
                   Icons.emoji_events,
                 ),
               ),
+              SizedBox(width: 12),
               Container(
                 height: 50,
                 width: 1,
                 color: Colors.white.withOpacity(0.3),
               ),
+              SizedBox(width: 12),
               Expanded(
                 child: _buildStatItem(
                   'Saved',
@@ -199,6 +201,7 @@ class GoalsPage extends StatelessWidget {
                   Icons.savings,
                 ),
               ),
+              SizedBox(width: 12),
               Container(
                 height: 50,
                 width: 1,
