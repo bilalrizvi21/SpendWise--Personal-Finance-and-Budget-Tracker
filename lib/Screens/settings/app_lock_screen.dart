@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import '../../../Core/constants/app_colors.dart';
-import '../../../Services/pin_service.dart';
-import '../../../Services/biometric_service.dart';
+import '../../Core/constants/app_colors.dart';
+import '../../Services/pin_service.dart';
+import '../../Services/biometric_service.dart';
 
+/// Full-screen PIN entry shown before profile selection.
+/// Calls [onUnlocked] when the user successfully authenticates.
 class AppLockScreen extends StatefulWidget {
   final VoidCallback onUnlocked;
 
@@ -15,118 +17,110 @@ class AppLockScreen extends StatefulWidget {
 
 class _AppLockScreenState extends State<AppLockScreen>
     with SingleTickerProviderStateMixin {
-  String _enteredPin = '';
-  String _errorMessage = '';
-  int _failedAttempts = 0;
-  bool _isLocked = false;
+  String _entered = '';
+  int _attempts = 0;
+  bool _locked = false;
+  int _lockSeconds = 30;
+  Timer? _lockTimer;
   bool _biometricAvailable = false;
-  String _biometricLabel = 'Fingerprint';
-  String _biometricIconType = 'fingerprint';
+  String _error = '';
 
-  late AnimationController _shakeController;
-  late Animation<double> _shakeAnimation;
+  // Shake animation
+  late AnimationController _shakeCtrl;
+  late Animation<double> _shakeAnim;
 
   @override
   void initState() {
     super.initState();
-
-    _shakeController = AnimationController(
+    _shakeCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 400),
+      duration: const Duration(milliseconds: 500),
     );
-    _shakeAnimation = Tween<double>(begin: 0, end: 1).animate(
-      CurvedAnimation(parent: _shakeController, curve: Curves.elasticIn),
-    );
-
+    _shakeAnim = Tween<double>(
+      begin: 0,
+      end: 1,
+    ).animate(CurvedAnimation(parent: _shakeCtrl, curve: Curves.elasticIn));
     _checkBiometric();
+    // Auto-trigger biometric on open
+    WidgetsBinding.instance.addPostFrameCallback((_) => _tryBiometric());
   }
 
   @override
   void dispose() {
-    _shakeController.dispose();
+    _shakeCtrl.dispose();
+    _lockTimer?.cancel();
     super.dispose();
   }
 
   Future<void> _checkBiometric() async {
     final biometricEnabled = await PinService.instance.isBiometricEnabled();
     final available = await BiometricService.instance.isAvailable();
-
-    if (biometricEnabled && available) {
-      final label = await BiometricService.instance.getBiometricLabel();
-      final iconType = await BiometricService.instance.getBiometricIconType();
-      setState(() {
-        _biometricAvailable = true;
-        _biometricLabel = label;
-        _biometricIconType = iconType;
-      });
-      // Auto-trigger biometric on open
-      _authenticateWithBiometric();
+    if (mounted) {
+      setState(() => _biometricAvailable = biometricEnabled && available);
     }
   }
 
-  Future<void> _authenticateWithBiometric() async {
+  Future<void> _tryBiometric() async {
+    if (!_biometricAvailable || _locked) return;
     final success = await BiometricService.instance.authenticate();
-    if (success && mounted) {
-      HapticFeedback.heavyImpact();
-      widget.onUnlocked();
-    }
+    if (success && mounted) widget.onUnlocked();
   }
 
-  void _onDigitTap(String digit) {
-    if (_isLocked || _enteredPin.length >= 4) return;
+  void _onKey(String digit) {
+    if (_locked || _entered.length >= 4) return;
     setState(() {
-      _enteredPin += digit;
-      _errorMessage = '';
+      _entered += digit;
+      _error = '';
     });
-    HapticFeedback.lightImpact();
-
-    if (_enteredPin.length == 4) {
-      Future.delayed(const Duration(milliseconds: 150), _verifyPin);
-    }
+    if (_entered.length == 4) _verify();
   }
 
-  void _onBackspace() {
-    if (_enteredPin.isEmpty || _isLocked) return;
-    HapticFeedback.lightImpact();
-    setState(
-      () => _enteredPin = _enteredPin.substring(0, _enteredPin.length - 1),
-    );
+  void _onDelete() {
+    if (_entered.isEmpty) return;
+    setState(() => _entered = _entered.substring(0, _entered.length - 1));
   }
 
-  Future<void> _verifyPin() async {
-    final valid = await PinService.instance.verifyPin(_enteredPin);
-
-    if (valid) {
-      HapticFeedback.heavyImpact();
+  Future<void> _verify() async {
+    final correct = await PinService.instance.verifyPin(_entered);
+    if (correct) {
       widget.onUnlocked();
     } else {
-      _failedAttempts++;
-      HapticFeedback.vibrate();
-      _shakeController.forward(from: 0);
-
-      if (_failedAttempts >= 3) {
-        setState(() {
-          _isLocked = true;
-          _enteredPin = '';
-          _errorMessage = 'Too many attempts. Wait 30 seconds.';
-        });
-        Future.delayed(const Duration(seconds: 30), () {
-          if (mounted) {
-            setState(() {
-              _isLocked = false;
-              _failedAttempts = 0;
-              _errorMessage = '';
-            });
-          }
-        });
+      _attempts++;
+      _shakeCtrl.forward(from: 0);
+      if (_attempts >= 3) {
+        _startLockout();
       } else {
         setState(() {
-          _errorMessage =
-              'Incorrect PIN. ${3 - _failedAttempts} attempts left.';
-          _enteredPin = '';
+          _entered = '';
+          _error =
+              'Incorrect PIN. ${3 - _attempts} attempt${3 - _attempts == 1 ? '' : 's'} remaining.';
         });
       }
     }
+  }
+
+  void _startLockout() {
+    setState(() {
+      _locked = true;
+      _entered = '';
+      _lockSeconds = 30;
+      _error = '';
+    });
+    _lockTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      setState(() => _lockSeconds--);
+      if (_lockSeconds <= 0) {
+        t.cancel();
+        setState(() {
+          _locked = false;
+          _attempts = 0;
+          _error = '';
+        });
+      }
+    });
   }
 
   @override
@@ -136,65 +130,61 @@ class _AppLockScreenState extends State<AppLockScreen>
       body: SafeArea(
         child: Column(
           children: [
-            const SizedBox(height: 60),
+            const Spacer(flex: 2),
 
-            // App logo + lock
-            Column(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(22),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF667EEA), Color(0xFF764BA2)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFF667EEA).withOpacity(0.4),
-                        blurRadius: 24,
-                        offset: const Offset(0, 10),
-                      ),
-                    ],
+            // ── Wallet icon ──
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                gradient: AppColors.neonBlue,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.primary.withOpacity(0.4),
+                    blurRadius: 24,
+                    offset: const Offset(0, 8),
                   ),
-                  child: const Icon(
-                    Icons.account_balance_wallet,
-                    color: Colors.white,
-                    size: 40,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                const Text(
-                  'SpendWise',
-                  style: TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 26,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                const Text(
-                  'Enter your PIN to continue',
-                  style: TextStyle(
-                    color: AppColors.textSecondary,
-                    fontSize: 14,
-                  ),
-                ),
-              ],
+                ],
+              ),
+              child: const Icon(
+                Icons.account_balance_wallet_rounded,
+                color: Colors.white,
+                size: 38,
+              ),
             ),
 
-            const SizedBox(height: 48),
+            const SizedBox(height: 20),
 
-            // PIN dots
+            const Text(
+              'SpendWise',
+              style: TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _locked
+                  ? 'Too many attempts. Wait $_lockSeconds seconds.'
+                  : 'Enter your PIN to continue',
+              style: TextStyle(
+                color: _locked ? AppColors.error : AppColors.textSecondary,
+                fontSize: 14,
+              ),
+              textAlign: TextAlign.center,
+            ),
+
+            const Spacer(),
+
+            // ── PIN dots ──
             AnimatedBuilder(
-              animation: _shakeAnimation,
+              animation: _shakeAnim,
               builder: (context, child) {
                 final offset =
-                    _shakeAnimation.value *
+                    _shakeAnim.value *
                     12 *
-                    ((_shakeAnimation.value * 10).toInt().isEven ? 1 : -1);
+                    ((_shakeAnim.value * 10).round().isEven ? 1 : -1);
                 return Transform.translate(
                   offset: Offset(offset, 0),
                   child: child,
@@ -202,34 +192,33 @@ class _AppLockScreenState extends State<AppLockScreen>
               },
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(4, (index) {
-                  final filled = index < _enteredPin.length;
-                  return AnimatedContainer(
-                    duration: const Duration(milliseconds: 150),
-                    margin: const EdgeInsets.symmetric(horizontal: 12),
-                    width: 20,
-                    height: 20,
+                children: List.generate(4, (i) {
+                  final filled = i < _entered.length;
+                  final isError = _error.isNotEmpty && _entered.isEmpty;
+                  return Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 10),
+                    width: 18,
+                    height: 18,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: filled
-                          ? (_isLocked ? AppColors.error : AppColors.primary)
-                          : Colors.transparent,
+                      color: isError
+                          ? AppColors.error
+                          : filled
+                          ? AppColors.primary
+                          : AppColors.surface,
                       border: Border.all(
-                        color: filled
-                            ? (_isLocked ? AppColors.error : AppColors.primary)
-                            : AppColors.textSecondary,
+                        color: isError
+                            ? AppColors.error
+                            : filled
+                            ? AppColors.primary
+                            : AppColors.textSecondary.withOpacity(0.4),
                         width: 2,
                       ),
-                      boxShadow: filled
+                      boxShadow: filled && !isError
                           ? [
                               BoxShadow(
-                                color:
-                                    (_isLocked
-                                            ? AppColors.error
-                                            : AppColors.primary)
-                                        .withOpacity(0.4),
+                                color: AppColors.primary.withOpacity(0.4),
                                 blurRadius: 8,
-                                spreadRadius: 1,
                               ),
                             ]
                           : null,
@@ -239,151 +228,104 @@ class _AppLockScreenState extends State<AppLockScreen>
               ),
             ),
 
-            const SizedBox(height: 20),
-
-            // Error / locked message
-            AnimatedOpacity(
-              opacity: _errorMessage.isNotEmpty ? 1.0 : 0.0,
-              duration: const Duration(milliseconds: 200),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.error.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(10),
-                ),
+            // Error message
+            if (_error.isNotEmpty && !_locked)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
                 child: Text(
-                  _errorMessage,
-                  style: const TextStyle(
-                    color: AppColors.error,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                  ),
+                  _error,
+                  style: const TextStyle(color: AppColors.error, fontSize: 12),
                 ),
               ),
-            ),
 
             const Spacer(),
 
-            // Number pad
+            // ── Keypad ──
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 40),
+              padding: const EdgeInsets.symmetric(horizontal: 48),
               child: Column(
                 children: [
-                  _buildRow(['1', '2', '3']),
+                  _keyRow(['1', '2', '3']),
                   const SizedBox(height: 16),
-                  _buildRow(['4', '5', '6']),
+                  _keyRow(['4', '5', '6']),
                   const SizedBox(height: 16),
-                  _buildRow(['7', '8', '9']),
+                  _keyRow(['7', '8', '9']),
                   const SizedBox(height: 16),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      // Biometric button or empty
-                      _biometricAvailable
-                          ? _buildBiometricButton()
-                          : const SizedBox(width: 72),
-                      _buildDigitButton('0'),
-                      _buildBackspaceButton(),
+                      // Biometric button
+                      _keyButton(
+                        child: _biometricAvailable
+                            ? Icon(
+                                Icons.fingerprint,
+                                color: _locked
+                                    ? AppColors.textSecondary
+                                    : AppColors.primary,
+                                size: 28,
+                              )
+                            : const SizedBox(width: 64, height: 64),
+                        onTap: _biometricAvailable && !_locked
+                            ? _tryBiometric
+                            : null,
+                      ),
+                      _digitButton('0'),
+                      _keyButton(
+                        child: Icon(
+                          Icons.backspace_outlined,
+                          color: _entered.isEmpty
+                              ? AppColors.textSecondary
+                              : AppColors.textPrimary,
+                          size: 24,
+                        ),
+                        onTap: _locked ? null : _onDelete,
+                      ),
                     ],
                   ),
                 ],
               ),
             ),
 
-            const SizedBox(height: 40),
+            const Spacer(flex: 2),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildRow(List<String> digits) {
+  Widget _keyRow(List<String> digits) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-      children: digits.map(_buildDigitButton).toList(),
+      children: digits.map(_digitButton).toList(),
     );
   }
 
-  Widget _buildDigitButton(String digit) {
-    return GestureDetector(
-      onTap: () => _onDigitTap(digit),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 100),
-        width: 72,
-        height: 72,
-        decoration: BoxDecoration(
-          color: _isLocked
-              ? AppColors.cardBackground.withOpacity(0.5)
-              : AppColors.cardBackground,
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white.withOpacity(0.08)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.2),
-              blurRadius: 8,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Center(
-          child: Text(
-            digit,
-            style: TextStyle(
-              color: _isLocked ? AppColors.textLight : AppColors.textPrimary,
-              fontSize: 24,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
+  Widget _digitButton(String digit) {
+    return _keyButton(
+      child: Text(
+        digit,
+        style: TextStyle(
+          color: _locked ? AppColors.textSecondary : AppColors.textPrimary,
+          fontSize: 26,
+          fontWeight: FontWeight.w500,
         ),
       ),
+      onTap: _locked ? null : () => _onKey(digit),
     );
   }
 
-  Widget _buildBackspaceButton() {
+  Widget _keyButton({required Widget child, VoidCallback? onTap}) {
     return GestureDetector(
-      onTap: _onBackspace,
+      onTap: onTap,
       child: Container(
         width: 72,
         height: 72,
         decoration: BoxDecoration(
-          color: AppColors.surface,
+          color: AppColors.cardBackground,
           shape: BoxShape.circle,
-          border: Border.all(color: Colors.white.withOpacity(0.05)),
+          border: Border.all(color: Colors.white.withOpacity(0.08), width: 1),
         ),
-        child: const Center(
-          child: Icon(
-            Icons.backspace_outlined,
-            color: AppColors.textSecondary,
-            size: 22,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBiometricButton() {
-    return GestureDetector(
-      onTap: _authenticateWithBiometric,
-      child: Container(
-        width: 72,
-        height: 72,
-        decoration: BoxDecoration(
-          color: AppColors.primary.withOpacity(0.1),
-          shape: BoxShape.circle,
-          border: Border.all(color: AppColors.primary.withOpacity(0.3)),
-        ),
-        child: Center(
-          child: Icon(
-            _biometricIconType == 'face'
-                ? Icons.face_outlined
-                : Icons.fingerprint,
-            color: AppColors.primary,
-            size: 32,
-          ),
-        ),
+        child: Center(child: child),
       ),
     );
   }

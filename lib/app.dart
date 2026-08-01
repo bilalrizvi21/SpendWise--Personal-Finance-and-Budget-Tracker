@@ -8,7 +8,9 @@ import 'package:spendwise_2/Providers/user_provider.dart';
 import 'package:spendwise_2/Providers/recurring_transaction_provider.dart';
 import 'Core/constants/app_theme.dart';
 import 'Core/constants/app_strings.dart';
+import 'Services/pin_service.dart';
 import 'Screens/profile/profile_selection_page.dart';
+import 'Screens/settings/app_lock_screen.dart';
 
 class SpendWiseApp extends StatelessWidget {
   const SpendWiseApp({Key? key}) : super(key: key);
@@ -42,14 +44,16 @@ class SpendWiseApp extends StatelessWidget {
   }
 }
 
-/// On every cold launch:
-///   1. Show splash while [initializeUser] runs (loads profiles from DB)
-///   2. Always route to [ProfileSelectionPage]
-///      • No profiles  → ProfileSelectionPage auto-pushes ProfileSetupPage
-///      • Has profiles → user sees the list, picks one, then enters the app
+/// Launch flow:
+///   1. Splash while initializing
+///   2. Check if app lock is enabled
+///      ├── YES → show AppLockScreen (PIN / biometric)
+///      │          └── on unlock → ProfileSelectionPage
+///      └── NO  → ProfileSelectionPage directly
 ///
-/// This guarantees the profile screen is ALWAYS shown on launch,
-/// which is the desired behaviour for demo/evaluation purposes.
+/// ProfileSelectionPage handles:
+///   • No profiles → auto-pushes ProfileSetupPage
+///   • Profiles exist → user picks one → MainNavigationPage
 class _AppEntry extends StatefulWidget {
   const _AppEntry({Key? key}) : super(key: key);
 
@@ -59,6 +63,8 @@ class _AppEntry extends StatefulWidget {
 
 class _AppEntryState extends State<_AppEntry> {
   bool _ready = false;
+  bool _lockEnabled = false;
+  bool _unlocked = false;
 
   @override
   void initState() {
@@ -67,23 +73,42 @@ class _AppEntryState extends State<_AppEntry> {
   }
 
   Future<void> _init() async {
-    // Loads all profiles from DB and restores the last active profile ID.
-    // Does NOT navigate — navigation is handled in build().
-    await context.read<UserProvider>().initializeUser();
+    // Load profiles in parallel with PIN check
+    await Future.wait([
+      context.read<UserProvider>().initializeUser(),
+      _checkLock(),
+    ]);
     if (mounted) setState(() => _ready = true);
+  }
+
+  Future<void> _checkLock() async {
+    _lockEnabled = await PinService.instance.isAppLockEnabled();
+    // If no PIN is actually set (e.g. lock was enabled then PIN removed),
+    // treat as unlocked to avoid a dead-end screen.
+    if (_lockEnabled) {
+      final pinSet = await PinService.instance.isPinSet();
+      if (!pinSet) _lockEnabled = false;
+    }
+  }
+
+  void _onUnlocked() {
+    setState(() => _unlocked = true);
   }
 
   @override
   Widget build(BuildContext context) {
     if (!_ready) return const _SplashScreen();
 
-    // Always land on the profile selection screen.
-    // ProfileSelectionPage handles routing to setup or dashboard internally.
+    // Show lock screen if enabled and not yet unlocked this session
+    if (_lockEnabled && !_unlocked) {
+      return AppLockScreen(onUnlocked: _onUnlocked);
+    }
+
+    // Profile selection (handles no-profiles → setup flow)
     return const ProfileSelectionPage(isLaunchScreen: true);
   }
 }
 
-// ── Simple splash shown during the ~100-200ms init ──
 class _SplashScreen extends StatelessWidget {
   const _SplashScreen({Key? key}) : super(key: key);
 

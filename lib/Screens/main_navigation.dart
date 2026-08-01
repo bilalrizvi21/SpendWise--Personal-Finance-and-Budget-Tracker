@@ -30,32 +30,77 @@ class MainNavigationPageState extends State<MainNavigationPage> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _initializeData();
-    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _initializeData());
   }
 
   Future<void> _initializeData() async {
-    // Initialize notifications first
-    await NotificationService.instance.initialize();
+    print('🚀 MainNavigation: starting initialization');
 
-    // Load all core data in parallel
+    // Step 1: Initialize notifications
+    await NotificationService.instance.initialize();
+    print('✅ Notifications initialized');
+
+    // Step 2: Load user preferences FIRST — must finish before reading toggles
+    final userProvider = context.read<UserProvider>();
+    await userProvider.initializeUser();
+    print('✅ User initialized: ${userProvider.userName}');
+
+    // Step 3: Read toggles from loaded preferences
+    final prefs = userProvider.preferences;
+    final budgetAlertsEnabled = prefs?.budgetAlertsEnabled ?? true;
+    final goalRemindersEnabled = prefs?.goalRemindersEnabled ?? true;
+    final anomalyWarningsEnabled = prefs?.aiAnomalyWarningsEnabled ?? true;
+    print(
+      '🔔 Toggles — budget:$budgetAlertsEnabled goal:$goalRemindersEnabled anomaly:$anomalyWarningsEnabled',
+    );
+
+    // Step 4: Load all data in parallel
+    final txProvider = context.read<TransactionProvider>();
     await Future.wait([
-      context.read<UserProvider>().initializeUser(),
-      context.read<TransactionProvider>().loadTransactions(),
+      txProvider.loadTransactions(),
       context.read<BudgetProvider>().loadBudgets(),
       context.read<GoalProvider>().loadGoals(),
-      context.read<AIInsightsProvider>().generateInsights(),
       context.read<RecurringTransactionProvider>().loadRecurring(),
     ]);
+    print(
+      '✅ All data loaded — ${txProvider.transactions.length} transactions, '
+      '${context.read<GoalProvider>().activeGoals.length} active goals',
+    );
 
-    // ✅ After everything is loaded, process any due recurring transactions
-    // This runs silently — notifications will fire for each processed item
+    // Step 5: Run AI insights with real transactions
+    await context.read<AIInsightsProvider>().generateInsights(
+      transactions: txProvider.transactions,
+    );
+    print(
+      '✅ AI insights generated — ${context.read<AIInsightsProvider>().anomalies.length} anomalies',
+    );
+
+    if (!mounted) return;
+
+    // Step 6: Fire notifications
+    print('🔔 Firing budget notifications (enabled=$budgetAlertsEnabled)');
+    await context.read<BudgetProvider>().checkAndNotify(
+      enabled: budgetAlertsEnabled,
+    );
+
+    print('🔔 Firing goal notifications (enabled=$goalRemindersEnabled)');
+    await context.read<GoalProvider>().checkAndNotify(
+      enabled: goalRemindersEnabled,
+    );
+
+    print('🔔 Firing anomaly notifications (enabled=$anomalyWarningsEnabled)');
+    await context.read<AIInsightsProvider>().notifyAnomalies(
+      enabled: anomalyWarningsEnabled,
+    );
+
+    // Step 7: Process recurring transactions
     if (mounted) {
       await context.read<RecurringTransactionProvider>().processDueTransactions(
         context,
       );
     }
+
+    print('✅ MainNavigation initialization complete');
   }
 
   final List<Widget> _pages = const [
@@ -103,9 +148,7 @@ class MainNavigationPageState extends State<MainNavigationPage> {
     );
   }
 
-  void _onPageChanged(int index) {
-    setState(() => _currentIndex = index);
-  }
+  void _onPageChanged(int index) => setState(() => _currentIndex = index);
 
   @override
   void dispose() {
@@ -168,12 +211,10 @@ class MainNavigationPageState extends State<MainNavigationPage> {
       ),
       floatingActionButton: _currentIndex == 0
           ? FloatingActionButton(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const ChatbotPage()),
-                );
-              },
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ChatbotPage()),
+              ),
               backgroundColor: AppColors.primary,
               child: const Icon(Icons.chat_bubble_outline, color: Colors.white),
             )

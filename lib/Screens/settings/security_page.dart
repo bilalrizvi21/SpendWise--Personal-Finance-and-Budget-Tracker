@@ -14,101 +14,168 @@ class SecurityPage extends StatefulWidget {
 class _SecurityPageState extends State<SecurityPage> {
   bool _appLockEnabled = false;
   bool _biometricEnabled = false;
-  bool _biometricAvailable = false;
   bool _pinSet = false;
-  String _biometricLabel = 'Fingerprint';
-  bool _isLoading = true;
+  bool _biometricAvailable = false;
+  String _biometricLabel = 'Biometric';
+  bool _loading = true;
 
   @override
   void initState() {
     super.initState();
-    _loadStatus();
+    _load();
   }
 
-  Future<void> _loadStatus() async {
+  Future<void> _load() async {
     final pinSet = await PinService.instance.isPinSet();
-    final appLock = await PinService.instance.isAppLockEnabled();
-    final biometric = await PinService.instance.isBiometricEnabled();
-    final biometricAvailable = await BiometricService.instance.isAvailable();
-    final biometricLabel = await BiometricService.instance.getBiometricLabel();
+    final lockEnabled = await PinService.instance.isAppLockEnabled();
+    final bioEnabled = await PinService.instance.isBiometricEnabled();
+    final bioAvailable = await BiometricService.instance.isAvailable();
+    final bioLabel = await BiometricService.instance.getBiometricLabel();
 
-    setState(() {
-      _pinSet = pinSet;
-      _appLockEnabled = appLock;
-      _biometricEnabled = biometric;
-      _biometricAvailable = biometricAvailable;
-      _biometricLabel = biometricLabel;
-      _isLoading = false;
-    });
-  }
-
-  Future<void> _toggleAppLock(bool enabled) async {
-    if (enabled && !_pinSet) {
-      // Need to set PIN first
-      final result = await Navigator.push<bool>(
-        context,
-        MaterialPageRoute(builder: (_) => const PinSetupPage()),
-      );
-      if (result == true) {
-        await _loadStatus();
-        _showSnackbar('App lock enabled!');
-      }
-    } else if (!enabled) {
-      // Show confirmation before disabling
-      final confirm = await _showConfirmDialog(
-        'Disable App Lock?',
-        'Your PIN will be removed and the app will no longer require authentication.',
-      );
-      if (confirm == true) {
-        await PinService.instance.removePin();
-        await _loadStatus();
-        _showSnackbar('App lock disabled');
-      }
+    if (mounted) {
+      setState(() {
+        _pinSet = pinSet;
+        _appLockEnabled = lockEnabled;
+        _biometricEnabled = bioEnabled;
+        _biometricAvailable = bioAvailable;
+        _biometricLabel = bioLabel;
+        _loading = false;
+      });
     }
   }
 
-  Future<void> _toggleBiometric(bool enabled) async {
+  // ── Enable/disable app lock ──
+  Future<void> _toggleAppLock(bool value) async {
+    if (value) {
+      // Need a PIN first
+      if (!_pinSet) {
+        final result = await Navigator.push<bool>(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const PinSetupPage(isChanging: false),
+          ),
+        );
+        if (result != true) return; // user cancelled
+        await _load();
+      }
+      await PinService.instance.setAppLockEnabled(true);
+      setState(() => _appLockEnabled = true);
+      _showSnack('App lock enabled', AppColors.success);
+    } else {
+      // Confirm before disabling
+      final confirm = await _confirmDialog(
+        title: 'Disable App Lock?',
+        body: 'Your app will no longer require a PIN or biometric to open.',
+        confirmText: 'Disable',
+        isDestructive: true,
+      );
+      if (!confirm) return;
+      await PinService.instance.setAppLockEnabled(false);
+      await PinService.instance.setBiometricEnabled(false);
+      setState(() {
+        _appLockEnabled = false;
+        _biometricEnabled = false;
+      });
+      _showSnack('App lock disabled', AppColors.warning);
+    }
+  }
+
+  // ── Enable/disable biometric ──
+  Future<void> _toggleBiometric(bool value) async {
     if (!_appLockEnabled) {
-      _showSnackbar('Enable App Lock first', isError: true);
+      _showSnack('Enable app lock first', AppColors.warning);
       return;
     }
-    await PinService.instance.setBiometricEnabled(enabled);
-    setState(() => _biometricEnabled = enabled);
-    _showSnackbar(
-      enabled ? '$_biometricLabel enabled!' : '$_biometricLabel disabled',
-    );
+    if (value) {
+      // Test biometric before enabling
+      final success = await BiometricService.instance.authenticate();
+      if (!success) {
+        _showSnack('Biometric authentication failed', AppColors.error);
+        return;
+      }
+      await PinService.instance.setBiometricEnabled(true);
+      setState(() => _biometricEnabled = true);
+      _showSnack('$_biometricLabel enabled', AppColors.success);
+    } else {
+      await PinService.instance.setBiometricEnabled(false);
+      setState(() => _biometricEnabled = false);
+      _showSnack('$_biometricLabel disabled', AppColors.warning);
+    }
   }
 
-  Future<void> _changePin() async {
-    await Navigator.push(
+  // ── Change PIN ──
+  Future<void> _changePIN() async {
+    if (!_pinSet) {
+      _showSnack('No PIN set. Enable app lock first.', AppColors.warning);
+      return;
+    }
+    final result = await Navigator.push<bool>(
       context,
-      MaterialPageRoute(builder: (_) => PinSetupPage(isChanging: true)),
+      MaterialPageRoute(builder: (_) => const PinSetupPage(isChanging: true)),
     );
-    await _loadStatus();
-    _showSnackbar('PIN changed successfully!');
+    if (result == true) await _load();
   }
 
+  // ── Remove PIN ──
+  Future<void> _removePin() async {
+    final confirm = await _confirmDialog(
+      title: 'Remove PIN?',
+      body: 'This will also disable app lock and biometric authentication.',
+      confirmText: 'Remove',
+      isDestructive: true,
+    );
+    if (!confirm) return;
+    await PinService.instance.removePin();
+    await _load();
+    _showSnack('PIN removed and app lock disabled', AppColors.warning);
+  }
+
+  // ── Test biometric ──
   Future<void> _testBiometric() async {
     final success = await BiometricService.instance.authenticate();
-    _showSnackbar(
-      success ? 'Biometric works!' : 'Biometric failed',
-      isError: !success,
+    _showSnack(
+      success ? '$_biometricLabel works correctly!' : '$_biometricLabel failed',
+      success ? AppColors.success : AppColors.error,
     );
   }
 
-  Future<bool?> _showConfirmDialog(String title, String content) {
-    return showDialog<bool>(
+  void _showSnack(String msg, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: color,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Future<bool> _confirmDialog({
+    required String title,
+    required String body,
+    required String confirmText,
+    bool isDestructive = false,
+  }) async {
+    final result = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.cardBackground,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Text(
           title,
-          style: const TextStyle(color: AppColors.textPrimary),
+          style: const TextStyle(
+            color: AppColors.textPrimary,
+            fontWeight: FontWeight.bold,
+          ),
         ),
         content: Text(
-          content,
-          style: const TextStyle(color: AppColors.textSecondary),
+          body,
+          style: const TextStyle(
+            color: AppColors.textSecondary,
+            fontSize: 14,
+            height: 1.5,
+          ),
         ),
         actions: [
           TextButton(
@@ -121,28 +188,23 @@ class _SecurityPageState extends State<SecurityPage> {
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.error,
+              backgroundColor: isDestructive
+                  ? AppColors.error
+                  : AppColors.primary,
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
             ),
-            child: const Text('Disable'),
+            child: Text(
+              confirmText,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
           ),
         ],
       ),
     );
-  }
-
-  void _showSnackbar(String msg, {bool isError = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: isError ? AppColors.error : AppColors.success,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-    );
+    return result ?? false;
   }
 
   @override
@@ -152,285 +214,214 @@ class _SecurityPageState extends State<SecurityPage> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
+        leading: IconButton(
+          icon: const Icon(
+            Icons.arrow_back_ios_new,
+            color: AppColors.textPrimary,
+            size: 18,
+          ),
+          onPressed: () => Navigator.pop(context),
+        ),
         title: const Text(
           'Security',
           style: TextStyle(
-            fontWeight: FontWeight.bold,
             color: AppColors.textPrimary,
+            fontWeight: FontWeight.bold,
+            fontSize: 20,
           ),
         ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
-          onPressed: () => Navigator.pop(context),
-        ),
       ),
-      body: _isLoading
+      body: _loading
           ? const Center(
               child: CircularProgressIndicator(color: AppColors.primary),
             )
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                // ── Status Card ──
-                _buildStatusCard(),
-
-                const SizedBox(height: 16),
-
-                // ── App Lock Toggle ──
-                _buildCard(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'App Lock',
-                        style: TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      const Text(
-                        'Require PIN every time you open SpendWise',
-                        style: TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 13,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Row(
-                            children: [
-                              _buildIconBox(Icons.lock_outline),
-                              const SizedBox(width: 12),
-                              Text(
-                                _appLockEnabled ? 'Enabled' : 'Disabled',
-                                style: TextStyle(
-                                  color: _appLockEnabled
-                                      ? AppColors.success
-                                      : AppColors.textSecondary,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                          Switch(
-                            value: _appLockEnabled,
-                            onChanged: _toggleAppLock,
-                            activeColor: AppColors.primary,
-                          ),
-                        ],
-                      ),
-                    ],
+                // ── Status card ──
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    gradient: _appLockEnabled
+                        ? const LinearGradient(
+                            colors: [Color(0xFF1F3864), Color(0xFF2E75B6)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          )
+                        : null,
+                    color: _appLockEnabled ? null : AppColors.cardBackground,
+                    borderRadius: BorderRadius.circular(20),
+                    border: _appLockEnabled
+                        ? null
+                        : Border.all(color: Colors.white.withOpacity(0.08)),
                   ),
-                ),
-
-                const SizedBox(height: 12),
-
-                // ── Biometric Toggle ──
-                _buildCard(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Text(
-                            _biometricLabel,
-                            style: const TextStyle(
-                              color: AppColors.textPrimary,
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          if (!_biometricAvailable) ...[
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 3,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppColors.warning.withOpacity(0.15),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: const Text(
-                                'Not available',
-                                style: TextStyle(
-                                  color: AppColors.warning,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _biometricAvailable
-                            ? 'Use $_biometricLabel instead of PIN'
-                            : 'Your device does not support biometric authentication',
-                        style: const TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 13,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Row(
-                            children: [
-                              _buildIconBox(Icons.fingerprint),
-                              const SizedBox(width: 12),
-                              Text(
-                                _biometricEnabled ? 'Enabled' : 'Disabled',
-                                style: TextStyle(
-                                  color: _biometricEnabled
-                                      ? AppColors.success
-                                      : AppColors.textSecondary,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                          Switch(
-                            value: _biometricEnabled,
-                            onChanged: _biometricAvailable
-                                ? _toggleBiometric
-                                : null,
-                            activeColor: AppColors.primary,
-                          ),
-                        ],
-                      ),
-                      // Test biometric button
-                      if (_biometricAvailable && _biometricEnabled) ...[
-                        const SizedBox(height: 12),
-                        GestureDetector(
-                          onTap: _testBiometric,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 10),
-                            decoration: BoxDecoration(
-                              color: AppColors.primary.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: AppColors.primary.withOpacity(0.3),
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(
-                                  Icons.fingerprint,
-                                  color: AppColors.primary,
-                                  size: 18,
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'Test $_biometricLabel',
-                                  style: const TextStyle(
-                                    color: AppColors.primary,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 12),
-
-                // ── Change PIN ──
-                if (_pinSet)
-                  _buildCard(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Change PIN',
-                          style: TextStyle(
-                            color: AppColors.textPrimary,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        const Text(
-                          'Update your 4-digit security PIN',
-                          style: TextStyle(
-                            color: AppColors.textSecondary,
-                            fontSize: 13,
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed: _changePin,
-                            icon: const Icon(Icons.edit_outlined, size: 18),
-                            label: const Text('Change PIN'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.primary.withOpacity(
-                                0.15,
-                              ),
-                              foregroundColor: AppColors.primary,
-                              elevation: 0,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                const SizedBox(height: 12),
-
-                // ── Privacy note ──
-                _buildCard(
                   child: Row(
                     children: [
                       Container(
-                        padding: const EdgeInsets.all(10),
+                        padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: AppColors.success.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(12),
+                          color:
+                              (_appLockEnabled
+                                      ? Colors.white
+                                      : AppColors.primary)
+                                  .withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(14),
                         ),
-                        child: const Icon(
-                          Icons.shield_outlined,
-                          color: AppColors.success,
-                          size: 22,
+                        child: Icon(
+                          _appLockEnabled
+                              ? Icons.lock_rounded
+                              : Icons.lock_open_rounded,
+                          color: _appLockEnabled
+                              ? Colors.white
+                              : AppColors.primary,
+                          size: 26,
                         ),
                       ),
-                      const SizedBox(width: 14),
-                      const Expanded(
+                      const SizedBox(width: 16),
+                      Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Your data is safe',
+                              _appLockEnabled
+                                  ? 'App Lock is ON'
+                                  : 'App Lock is OFF',
                               style: TextStyle(
-                                color: AppColors.textPrimary,
+                                color: _appLockEnabled
+                                    ? Colors.white
+                                    : AppColors.textPrimary,
                                 fontWeight: FontWeight.bold,
+                                fontSize: 16,
                               ),
                             ),
-                            SizedBox(height: 4),
+                            const SizedBox(height: 2),
                             Text(
-                              'PIN and all financial data is stored locally on your device only.',
+                              _appLockEnabled
+                                  ? 'Your app is protected with a PIN${_biometricEnabled ? ' and $_biometricLabel' : ''}'
+                                  : 'Enable PIN lock to protect your financial data',
                               style: TextStyle(
-                                color: AppColors.textSecondary,
+                                color: _appLockEnabled
+                                    ? Colors.white.withOpacity(0.8)
+                                    : AppColors.textSecondary,
                                 fontSize: 12,
-                                height: 1.4,
                               ),
                             ),
                           ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 20),
+
+                // ── App Lock toggle ──
+                _sectionHeader('App Lock'),
+                _settingsTile(
+                  icon: Icons.lock_rounded,
+                  title: 'Enable App Lock',
+                  subtitle: _pinSet
+                      ? 'PIN is set. Toggle to enable or disable.'
+                      : 'Tap to set a PIN and enable app lock',
+                  trailing: Switch(
+                    value: _appLockEnabled,
+                    onChanged: _toggleAppLock,
+                    activeColor: AppColors.primary,
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+
+                // ── PIN Management ──
+                _sectionHeader('PIN Management'),
+                _settingsTile(
+                  icon: Icons.pin_rounded,
+                  title: _pinSet ? 'Change PIN' : 'Set PIN',
+                  subtitle: _pinSet
+                      ? 'Update your 4-digit PIN'
+                      : 'Set a 4-digit PIN for app lock',
+                  trailing: const Icon(
+                    Icons.chevron_right,
+                    color: AppColors.textSecondary,
+                  ),
+                  onTap: _pinSet ? _changePIN : () => _toggleAppLock(true),
+                ),
+
+                if (_pinSet) ...[
+                  const SizedBox(height: 8),
+                  _settingsTile(
+                    icon: Icons.delete_outline,
+                    title: 'Remove PIN',
+                    subtitle: 'This will disable app lock entirely',
+                    iconColor: AppColors.error,
+                    trailing: const Icon(
+                      Icons.chevron_right,
+                      color: AppColors.textSecondary,
+                    ),
+                    onTap: _removePin,
+                  ),
+                ],
+
+                const SizedBox(height: 12),
+
+                // ── Biometric ──
+                if (_biometricAvailable) ...[
+                  _sectionHeader('Biometric Authentication'),
+                  _settingsTile(
+                    icon: Icons.fingerprint,
+                    title: _biometricLabel,
+                    subtitle: _appLockEnabled
+                        ? 'Use $_biometricLabel instead of PIN'
+                        : 'Enable app lock first to use $_biometricLabel',
+                    trailing: Switch(
+                      value: _biometricEnabled,
+                      onChanged: _appLockEnabled ? _toggleBiometric : null,
+                      activeColor: AppColors.primary,
+                    ),
+                  ),
+                  if (_biometricEnabled) ...[
+                    const SizedBox(height: 8),
+                    _settingsTile(
+                      icon: Icons.verified_user_outlined,
+                      title: 'Test $_biometricLabel',
+                      subtitle: 'Verify your biometric works correctly',
+                      trailing: const Icon(
+                        Icons.chevron_right,
+                        color: AppColors.textSecondary,
+                      ),
+                      onTap: _testBiometric,
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                ],
+
+                // ── Info card ──
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withOpacity(0.06),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: AppColors.primary.withOpacity(0.2),
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(
+                        Icons.info_outline,
+                        color: AppColors.primary,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 10),
+                      const Expanded(
+                        child: Text(
+                          'App lock is shown every time you open SpendWise, before the profile selection screen. After 3 incorrect PIN attempts, a 30-second lockout is enforced.',
+                          style: TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12,
+                            height: 1.5,
+                          ),
                         ),
                       ),
                     ],
@@ -441,81 +432,61 @@ class _SecurityPageState extends State<SecurityPage> {
     );
   }
 
-  Widget _buildStatusCard() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: _appLockEnabled
-            ? const LinearGradient(
-                colors: [Color(0xFF667EEA), Color(0xFF764BA2)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              )
-            : LinearGradient(
-                colors: [AppColors.cardBackground, AppColors.surface],
-              ),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            _appLockEnabled ? Icons.lock : Icons.lock_open_outlined,
-            color: Colors.white,
-            size: 32,
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _appLockEnabled ? 'App is Protected' : 'App is Unlocked',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _appLockEnabled
-                      ? _biometricEnabled
-                            ? 'PIN + $_biometricLabel enabled'
-                            : 'PIN protection active'
-                      : 'Enable app lock for security',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.8),
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+  Widget _sectionHeader(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text(
+        title,
+        style: const TextStyle(
+          color: AppColors.textSecondary,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.5,
+        ),
       ),
     );
   }
 
-  Widget _buildCard({required Widget child}) {
+  Widget _settingsTile({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required Widget trailing,
+    Color? iconColor,
+    VoidCallback? onTap,
+  }) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      margin: const EdgeInsets.only(bottom: 4),
       decoration: BoxDecoration(
         color: AppColors.cardBackground,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(0.05)),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.06), width: 1),
       ),
-      child: child,
-    );
-  }
-
-  Widget _buildIconBox(IconData icon) {
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: AppColors.primary.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(10),
+      child: ListTile(
+        onTap: onTap,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        leading: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: (iconColor ?? AppColors.primary).withOpacity(0.1),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, color: iconColor ?? AppColors.primary, size: 20),
+        ),
+        title: Text(
+          title,
+          style: const TextStyle(
+            color: AppColors.textPrimary,
+            fontWeight: FontWeight.w600,
+            fontSize: 14,
+          ),
+        ),
+        subtitle: Text(
+          subtitle,
+          style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
+        ),
+        trailing: trailing,
       ),
-      child: Icon(icon, color: AppColors.primary, size: 20),
     );
   }
 }

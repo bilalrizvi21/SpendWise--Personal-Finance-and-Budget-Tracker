@@ -11,68 +11,80 @@ class ProfilePage extends StatefulWidget {
 }
 
 class _ProfilePageState extends State<ProfilePage> {
-  final _formKey = GlobalKey<FormState>();
-  late TextEditingController _nameController;
-  late TextEditingController _emailController;
-  late TextEditingController _phoneController;
-  bool _isSaving = false;
+  late TextEditingController _nameCtrl;
+  late TextEditingController _emailCtrl;
+  late TextEditingController _phoneCtrl;
+
   bool _hasChanges = false;
+  bool _isSaving = false;
 
   @override
   void initState() {
     super.initState();
-    final user = context.read<UserProvider>().user;
-    _nameController = TextEditingController(text: user?.name ?? '');
-    _emailController = TextEditingController(text: user?.email ?? '');
-    _phoneController = TextEditingController(text: user?.phoneNumber ?? '');
+    final user = context.read<UserProvider>();
+    _nameCtrl = TextEditingController(text: user.userName);
+    _emailCtrl = TextEditingController(text: user.userEmail);
+    _phoneCtrl = TextEditingController(text: user.user?.phoneNumber ?? '');
 
     // Track changes
-    _nameController.addListener(_onChanged);
-    _emailController.addListener(_onChanged);
-    _phoneController.addListener(_onChanged);
+    for (final ctrl in [_nameCtrl, _emailCtrl, _phoneCtrl]) {
+      ctrl.addListener(_onChanged);
+    }
   }
 
   void _onChanged() {
-    final user = context.read<UserProvider>().user;
+    final user = context.read<UserProvider>();
     final changed =
-        _nameController.text != (user?.name ?? '') ||
-        _emailController.text != (user?.email ?? '') ||
-        _phoneController.text != (user?.phoneNumber ?? '');
+        _nameCtrl.text.trim() != user.userName ||
+        _emailCtrl.text.trim() != user.userEmail ||
+        _phoneCtrl.text.trim() != (user.user?.phoneNumber ?? '');
     if (changed != _hasChanges) setState(() => _hasChanges = changed);
   }
 
   @override
   void dispose() {
-    _nameController.dispose();
-    _emailController.dispose();
-    _phoneController.dispose();
+    _nameCtrl.dispose();
+    _emailCtrl.dispose();
+    _phoneCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _save() async {
-    if (!_formKey.currentState!.validate()) return;
-    setState(() => _isSaving = true);
+    if (!_hasChanges || _isSaving) return;
 
+    final name = _nameCtrl.text.trim();
+    if (name.isEmpty) {
+      _showSnack('Name cannot be empty', AppColors.error);
+      return;
+    }
+
+    setState(() => _isSaving = true);
     try {
       await context.read<UserProvider>().updateProfile(
-        name: _nameController.text.trim(),
-        email: _emailController.text.trim(),
-        phoneNumber: _phoneController.text.trim(),
+        name: name,
+        email: _emailCtrl.text.trim(),
+        phoneNumber: _phoneCtrl.text.trim(),
       );
-      setState(() => _hasChanges = false);
-      _showSnackbar('Profile updated!');
+      if (mounted) {
+        _showSnack('Profile updated!', AppColors.success);
+        setState(() {
+          _hasChanges = false;
+          _isSaving = false;
+        });
+      }
     } catch (e) {
-      _showSnackbar('Failed to update profile', isError: true);
-    } finally {
-      setState(() => _isSaving = false);
+      if (mounted) {
+        _showSnack('Error: $e', AppColors.error);
+        setState(() => _isSaving = false);
+      }
     }
   }
 
-  void _showSnackbar(String msg, {bool isError = false}) {
+  void _showSnack(String msg, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(msg),
-        backgroundColor: isError ? AppColors.error : AppColors.success,
+        backgroundColor: color,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
@@ -86,161 +98,119 @@ class _ProfilePageState extends State<ProfilePage> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
+        leading: IconButton(
+          icon: const Icon(
+            Icons.arrow_back_ios_new,
+            color: AppColors.textPrimary,
+            size: 18,
+          ),
+          onPressed: () => Navigator.pop(context),
+        ),
         title: const Text(
           'Profile',
           style: TextStyle(
-            fontWeight: FontWeight.bold,
             color: AppColors.textPrimary,
+            fontWeight: FontWeight.bold,
           ),
         ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
-          onPressed: () => Navigator.pop(context),
-        ),
-      ),
-      body: Consumer<UserProvider>(
-        builder: (context, provider, _) {
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                children: [
-                  // Avatar
-                  Center(
-                    child: CircleAvatar(
-                      radius: 50,
-                      backgroundColor: AppColors.primary.withOpacity(0.2),
-                      child: Text(
-                        provider.userInitials,
-                        style: const TextStyle(
-                          color: AppColors.primary,
-                          fontSize: 32,
-                          fontWeight: FontWeight.bold,
-                        ),
+        actions: [
+          if (_hasChanges)
+            TextButton(
+              onPressed: _isSaving ? null : _save,
+              child: _isSaving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppColors.primary,
+                      ),
+                    )
+                  : const Text(
+                      'Save',
+                      style: TextStyle(
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
                       ),
                     ),
-                  ),
-
-                  const SizedBox(height: 8),
-
-                  // Name shown under avatar (updates live)
-                  Text(
-                    provider.userName,
+            ),
+        ],
+      ),
+      body: Consumer<UserProvider>(
+        builder: (context, userProvider, _) {
+          return SingleChildScrollView(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                // Avatar
+                CircleAvatar(
+                  radius: 48,
+                  backgroundColor: AppColors.primary.withOpacity(0.15),
+                  child: Text(
+                    userProvider.userInitials,
                     style: const TextStyle(
-                      color: AppColors.textPrimary,
-                      fontSize: 18,
+                      color: AppColors.primary,
+                      fontSize: 32,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  Text(
-                    provider.userEmail,
-                    style: const TextStyle(
-                      color: AppColors.textSecondary,
-                      fontSize: 13,
-                    ),
+                ),
+
+                const SizedBox(height: 8),
+
+                Text(
+                  userProvider.userName,
+                  style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
                   ),
-
-                  const SizedBox(height: 32),
-
-                  // Name field — always editable
-                  _buildField(
-                    label: 'Full Name',
-                    controller: _nameController,
-                    icon: Icons.person_outline,
-                    validator: (v) => v == null || v.trim().isEmpty
-                        ? 'Name is required'
-                        : null,
+                ),
+                Text(
+                  userProvider.userEmail,
+                  style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 13,
                   ),
+                ),
 
-                  const SizedBox(height: 16),
+                const SizedBox(height: 32),
 
-                  // Email field — always editable
-                  _buildField(
-                    label: 'Email Address',
-                    controller: _emailController,
-                    icon: Icons.email_outlined,
-                    keyboardType: TextInputType.emailAddress,
-                    validator: (v) {
-                      if (v == null || v.trim().isEmpty)
-                        return 'Email is required';
-                      if (!v.contains('@')) return 'Enter a valid email';
-                      return null;
-                    },
-                  ),
+                // Fields
+                _buildField(
+                  label: 'Full Name',
+                  controller: _nameCtrl,
+                  icon: Icons.person_outline,
+                  hint: 'Enter your name',
+                ),
+                const SizedBox(height: 14),
+                _buildField(
+                  label: 'Email Address',
+                  controller: _emailCtrl,
+                  icon: Icons.email_outlined,
+                  hint: 'Enter your email',
+                  keyboardType: TextInputType.emailAddress,
+                ),
+                const SizedBox(height: 14),
+                _buildField(
+                  label: 'Phone Number',
+                  controller: _phoneCtrl,
+                  icon: Icons.phone_outlined,
+                  hint: 'Enter your phone number',
+                  keyboardType: TextInputType.phone,
+                ),
 
-                  const SizedBox(height: 16),
+                const SizedBox(height: 32),
 
-                  // Phone field — always editable
-                  _buildField(
-                    label: 'Phone Number',
-                    controller: _phoneController,
-                    icon: Icons.phone_outlined,
-                    keyboardType: TextInputType.phone,
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  // Member since (read only)
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: AppColors.surface,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: AppColors.primary.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: const Icon(
-                            Icons.calendar_today_outlined,
-                            color: AppColors.primary,
-                            size: 20,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Member Since',
-                              style: TextStyle(
-                                color: AppColors.textSecondary,
-                                fontSize: 12,
-                              ),
-                            ),
-                            Text(
-                              provider.user?.createdAt.toString().split(
-                                    ' ',
-                                  )[0] ??
-                                  '—',
-                              style: const TextStyle(
-                                color: AppColors.textPrimary,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 32),
-
-                  // Save button — only active when there are changes
+                // Save button
+                if (_hasChanges)
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: (_hasChanges && !_isSaving) ? _save : null,
+                      onPressed: _isSaving ? null : _save,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.primary,
-                        disabledBackgroundColor: AppColors.primary.withOpacity(
-                          0.3,
-                        ),
                         foregroundColor: Colors.black,
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(
@@ -252,7 +222,7 @@ class _ProfilePageState extends State<ProfilePage> {
                               height: 20,
                               width: 20,
                               child: CircularProgressIndicator(
-                                strokeWidth: 2,
+                                strokeWidth: 2.5,
                                 color: Colors.black,
                               ),
                             )
@@ -265,8 +235,41 @@ class _ProfilePageState extends State<ProfilePage> {
                             ),
                     ),
                   ),
-                ],
-              ),
+
+                const SizedBox(height: 16),
+
+                // Profile info card
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withOpacity(0.06),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: AppColors.primary.withOpacity(0.2),
+                    ),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(
+                        Icons.info_outline,
+                        color: AppColors.primary,
+                        size: 16,
+                      ),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Profile changes are saved locally on your device. Each profile has its own independent data.',
+                          style: TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 11,
+                            height: 1.5,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           );
         },
@@ -278,41 +281,46 @@ class _ProfilePageState extends State<ProfilePage> {
     required String label,
     required TextEditingController controller,
     required IconData icon,
-    TextInputType? keyboardType,
-    String? Function(String?)? validator,
+    required String hint,
+    TextInputType keyboardType = TextInputType.text,
   }) {
-    return TextFormField(
-      controller: controller,
-      keyboardType: keyboardType,
-      validator: validator,
-      style: const TextStyle(color: AppColors.textPrimary),
-      decoration: InputDecoration(
-        labelText: label,
-        labelStyle: const TextStyle(color: AppColors.textSecondary),
-        prefixIcon: Icon(icon, color: AppColors.primary, size: 20),
-        filled: true,
-        fillColor: AppColors.surface,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide.none,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: AppColors.textSecondary,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
         ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(color: AppColors.primary, width: 2),
+        const SizedBox(height: 6),
+        TextFormField(
+          controller: controller,
+          keyboardType: keyboardType,
+          style: const TextStyle(color: AppColors.textPrimary, fontSize: 15),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: const TextStyle(color: AppColors.textLight),
+            prefixIcon: Icon(icon, color: AppColors.primary, size: 20),
+            filled: true,
+            fillColor: AppColors.cardBackground,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: const BorderSide(color: AppColors.primary, width: 2),
+            ),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 14,
+            ),
+          ),
         ),
-        errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(color: AppColors.error),
-        ),
-        focusedErrorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(color: AppColors.error, width: 2),
-        ),
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 16,
-        ),
-      ),
+      ],
     );
   }
 }

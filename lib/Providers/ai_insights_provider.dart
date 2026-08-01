@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import '../Models/ai_insights.dart';
 import '../Models/transaction.dart';
+import '../Services/notification_service.dart';
 
 class AIInsightsProvider extends ChangeNotifier {
   List<AIInsight> _insights = [];
@@ -10,6 +11,8 @@ class AIInsightsProvider extends ChangeNotifier {
   List<SavingsRecommendation> _recommendations = [];
   bool _isLoading = false;
   String? _error;
+
+  final Set<String> _notifiedAnomalies = {};
 
   List<AIInsight> get insights => _insights;
   SpendingPrediction? get prediction => _prediction;
@@ -22,18 +25,15 @@ class AIInsightsProvider extends ChangeNotifier {
   List<AIInsight> get unreadInsights =>
       _insights.where((i) => !i.isRead).toList();
 
-  List<AIInsight> getInsightsByType(InsightType type) =>
-      _insights.where((i) => i.type == type).toList();
-
-  List<AIInsight> getInsightsByPriority(InsightPriority priority) =>
-      _insights.where((i) => i.priority == priority).toList();
-
   List<AIInsight> get activeInsights =>
       _insights.where((i) => !i.isDismissed).toList();
 
-  // ══════════════════════════════════════════════════════
-  // MAIN ENTRY POINT — pass real transactions in
-  // ══════════════════════════════════════════════════════
+  List<AIInsight> getInsightsByType(InsightType type) =>
+      _insights.where((i) => i.type == type).toList();
+
+  // ════════════════════════════════════════
+  // MAIN — does NOT fire notifications
+  // ════════════════════════════════════════
 
   Future<void> generateInsights({List<Transaction>? transactions}) async {
     try {
@@ -42,7 +42,6 @@ class AIInsightsProvider extends ChangeNotifier {
       notifyListeners();
 
       if (transactions == null || transactions.isEmpty) {
-        // No data yet — clear everything
         _insights = [];
         _anomalies = [];
         _prediction = null;
@@ -53,12 +52,16 @@ class AIInsightsProvider extends ChangeNotifier {
         return;
       }
 
-      // Run all analyses
       _anomalies = _detectAnomalies(transactions);
       _prediction = _predictNextMonth(transactions);
       _healthScore = _calculateHealthScore(transactions);
       _recommendations = _generateRecommendations(transactions);
       _insights = _buildInsights(transactions);
+
+      print(
+        '🧠 AI Insights: ${_anomalies.length} anomalies, '
+        '${_insights.length} insights generated',
+      );
 
       _isLoading = false;
       notifyListeners();
@@ -69,47 +72,76 @@ class AIInsightsProvider extends ChangeNotifier {
     }
   }
 
-  // ══════════════════════════════════════════════════════
+  // ════════════════════════════════════════
+  // PUBLIC: called by MainNavigation after preferences are loaded
+  // ════════════════════════════════════════
+
+  Future<void> notifyAnomalies({required bool enabled}) async {
+    print(
+      '🧠 AIInsightsProvider.notifyAnomalies — enabled=$enabled, anomalies=${_anomalies.length}',
+    );
+
+    if (!enabled) {
+      print('⏭️ Anomaly warnings disabled — skipping');
+      return;
+    }
+
+    if (_anomalies.isEmpty) {
+      print('ℹ️ No anomalies detected — nothing to notify');
+      return;
+    }
+
+    for (final anomaly in _anomalies) {
+      final key = '${anomaly.category}_${anomaly.severity}';
+      print(
+        '  🔍 Anomaly: ${anomaly.category} ${anomaly.severity} '
+        '(${anomaly.deviation.toInt()}%) — alreadyNotified=${_notifiedAnomalies.contains(key)}',
+      );
+
+      if (_notifiedAnomalies.contains(key)) continue;
+
+      _notifiedAnomalies.add(key);
+      print('  🔔 Firing ANOMALY notification for ${anomaly.category}');
+      await NotificationService.instance.showAnomalyNotification(
+        category: anomaly.category,
+        deviation: anomaly.deviation,
+        severity: anomaly.severity,
+        actualAmount: anomaly.actualAmount,
+        expectedAmount: anomaly.expectedAmount,
+      );
+    }
+    print('✅ AIInsightsProvider.notifyAnomalies complete');
+  }
+
+  // ════════════════════════════════════════
   // 1. ANOMALY DETECTION
-  // Logic: Compare current month spending per category
-  // against the 3-month rolling average.
-  // Threshold: >20% above average = anomaly
-  // ══════════════════════════════════════════════════════
+  // ════════════════════════════════════════
 
   List<Anomaly> _detectAnomalies(List<Transaction> transactions) {
     final now = DateTime.now();
-
-    // Current month expenses per category
     final currentMonth = _getMonthExpenses(transactions, now.year, now.month);
-
-    // Previous 3 months per category
     final month1 = _getMonthExpenses(transactions, now.year, now.month - 1);
     final month2 = _getMonthExpenses(transactions, now.year, now.month - 2);
     final month3 = _getMonthExpenses(transactions, now.year, now.month - 3);
 
-    // Only detect anomalies for categories that have at least
-    // 2 months of history — avoids false positives on new categories
     final anomalies = <Anomaly>[];
 
     for (final entry in currentMonth.entries) {
       final category = entry.key;
       final currentAmount = entry.value;
 
-      // Collect historical data for this category
       final history = <double>[];
       if (month1.containsKey(category)) history.add(month1[category]!);
       if (month2.containsKey(category)) history.add(month2[category]!);
       if (month3.containsKey(category)) history.add(month3[category]!);
 
-      if (history.isEmpty) continue; // No history to compare against
+      if (history.isEmpty) continue;
 
       final avgSpending = history.fold(0.0, (a, b) => a + b) / history.length;
-
       if (avgSpending == 0) continue;
 
       final deviation = ((currentAmount - avgSpending) / avgSpending) * 100;
 
-      // Only flag if spending is HIGHER than usual by threshold
       if (deviation >= 20) {
         final severity = deviation >= 50
             ? 'major'
@@ -133,28 +165,22 @@ class AIInsightsProvider extends ChangeNotifier {
       }
     }
 
-    // Sort by deviation descending — worst first
     anomalies.sort((a, b) => b.deviation.compareTo(a.deviation));
     return anomalies;
   }
 
-  // ══════════════════════════════════════════════════════
-  // 2. NEXT MONTH PREDICTION
-  // Logic: Weighted average of last 3 months
-  // Most recent month gets highest weight
-  // ══════════════════════════════════════════════════════
+  // ════════════════════════════════════════
+  // 2. PREDICTION
+  // ════════════════════════════════════════
 
   SpendingPrediction? _predictNextMonth(List<Transaction> transactions) {
     final now = DateTime.now();
-
     final m1 = _getTotalMonthExpense(transactions, now.year, now.month - 1);
     final m2 = _getTotalMonthExpense(transactions, now.year, now.month - 2);
     final m3 = _getTotalMonthExpense(transactions, now.year, now.month - 3);
 
-    // Need at least 1 month of data
     if (m1 == 0 && m2 == 0 && m3 == 0) return null;
 
-    // Weighted average: 50% last month, 30% month before, 20% oldest
     double predicted;
     if (m1 > 0 && m2 > 0 && m3 > 0) {
       predicted = (m1 * 0.5) + (m2 * 0.3) + (m3 * 0.2);
@@ -164,7 +190,6 @@ class AIInsightsProvider extends ChangeNotifier {
       predicted = m1 > 0 ? m1 : m2;
     }
 
-    // Category breakdown for next month (proportional from last month)
     final lastMonthCats = _getMonthExpenses(
       transactions,
       now.year,
@@ -173,8 +198,8 @@ class AIInsightsProvider extends ChangeNotifier {
     final lastTotal = lastMonthCats.values.fold(0.0, (a, b) => a + b);
     final Map<String, double> breakdown = {};
     if (lastTotal > 0) {
-      for (final entry in lastMonthCats.entries) {
-        breakdown[entry.key] = (entry.value / lastTotal) * predicted;
+      for (final e in lastMonthCats.entries) {
+        breakdown[e.key] = (e.value / lastTotal) * predicted;
       }
     }
 
@@ -187,10 +212,9 @@ class AIInsightsProvider extends ChangeNotifier {
     );
   }
 
-  // ══════════════════════════════════════════════════════
-  // 3. FINANCIAL HEALTH SCORE
-  // Savings rate, budget adherence, consistency
-  // ══════════════════════════════════════════════════════
+  // ════════════════════════════════════════
+  // 3. HEALTH SCORE
+  // ════════════════════════════════════════
 
   FinancialHealthScore? _calculateHealthScore(List<Transaction> transactions) {
     final now = DateTime.now();
@@ -213,89 +237,81 @@ class AIInsightsProvider extends ChangeNotifier {
 
     if (income == 0) return null;
 
-    final savingsRate = ((income - expenses) / income * 100).clamp(0, 100);
-    final expenseRatio = (expenses / income * 100).clamp(0, 100);
+    final savingsRate = ((income - expenses) / income * 100).clamp(0.0, 100.0);
+    final expenseRatio = (expenses / income * 100).clamp(0.0, 100.0);
 
-    // Savings rate score: 0-100
-    double savingsScore;
-    if (savingsRate >= 30)
-      savingsScore = 100;
-    else if (savingsRate >= 20)
-      savingsScore = 80;
-    else if (savingsRate >= 10)
-      savingsScore = 60;
-    else if (savingsRate >= 0)
-      savingsScore = 40;
-    else
-      savingsScore = 20;
+    double savingsScore = savingsRate >= 30
+        ? 100
+        : savingsRate >= 20
+        ? 80
+        : savingsRate >= 10
+        ? 60
+        : 40;
 
-    // Expense ratio score (lower is better)
-    double expenseScore;
-    if (expenseRatio <= 50)
-      expenseScore = 100;
-    else if (expenseRatio <= 70)
-      expenseScore = 80;
-    else if (expenseRatio <= 85)
-      expenseScore = 60;
-    else if (expenseRatio <= 100)
-      expenseScore = 40;
-    else
-      expenseScore = 20;
+    double expenseScore = expenseRatio <= 50
+        ? 100
+        : expenseRatio <= 70
+        ? 80
+        : expenseRatio <= 85
+        ? 60
+        : 40;
 
-    // Consistency: how many months have transactions in last 3
     int activeMonths = 0;
     for (int i = 1; i <= 3; i++) {
-      final hasData = transactions.any((t) {
-        final d = DateTime(now.year, now.month - i, 1);
-        return t.date.year == d.year && t.date.month == d.month;
-      });
-      if (hasData) activeMonths++;
+      final d = DateTime(now.year, now.month - i, 1);
+      if (transactions.any(
+        (t) => t.date.year == d.year && t.date.month == d.month,
+      )) {
+        activeMonths++;
+      }
     }
-    final consistencyScore = (activeMonths / 3 * 100).clamp(0, 100);
+    final double consistencyScore = (activeMonths / 3 * 100.0).clamp(
+      0.0,
+      100.0,
+    );
 
-    final overallScore =
+    final double overallScore =
         (savingsScore * 0.4 + expenseScore * 0.4 + consistencyScore * 0.2)
-            .clamp(0, 100);
+            .clamp(0.0, 100.0);
 
-    String rating;
-    if (overallScore >= 80)
-      rating = 'excellent';
-    else if (overallScore >= 60)
-      rating = 'good';
-    else if (overallScore >= 40)
-      rating = 'fair';
-    else
-      rating = 'poor';
+    String rating = overallScore >= 80
+        ? 'excellent'
+        : overallScore >= 60
+        ? 'good'
+        : overallScore >= 40
+        ? 'fair'
+        : 'poor';
 
     final strengths = <String>[];
     final improvements = <String>[];
 
-    if (savingsRate >= 20)
+    if (savingsRate >= 20) {
       strengths.add('Good savings rate (${savingsRate.toInt()}%)');
-    else
+    } else {
       improvements.add(
-        'Increase your savings rate (currently ${savingsRate.toInt()}%)',
+        'Increase savings rate (currently ${savingsRate.toInt()}%)',
       );
-
-    if (expenseRatio <= 70)
+    }
+    if (expenseRatio <= 70) {
       strengths.add('Controlled spending (${expenseRatio.toInt()}% of income)');
-    else
+    } else {
       improvements.add(
         'Reduce expenses (${expenseRatio.toInt()}% of income spent)',
       );
-
-    if (activeMonths >= 2)
+    }
+    if (activeMonths >= 2) {
       strengths.add('Consistent tracking for $activeMonths months');
-    else
+    } else {
       improvements.add('Track transactions every month for better insights');
+    }
 
     return FinancialHealthScore(
-      score: overallScore.toDouble(),
+      score: overallScore,
       rating: rating,
       breakdown: {
         'Savings Rate': savingsScore,
         'Spending Control': expenseScore,
-        'Consistency': consistencyScore.toDouble(),
+        'Consistency': consistencyScore,
       },
       strengths: strengths,
       improvements: improvements,
@@ -303,10 +319,9 @@ class AIInsightsProvider extends ChangeNotifier {
     );
   }
 
-  // ══════════════════════════════════════════════════════
-  // 4. SAVINGS RECOMMENDATIONS
-  // Based on top 2 spending categories vs previous months
-  // ══════════════════════════════════════════════════════
+  // ════════════════════════════════════════
+  // 4. RECOMMENDATIONS
+  // ════════════════════════════════════════
 
   List<SavingsRecommendation> _generateRecommendations(
     List<Transaction> transactions,
@@ -321,19 +336,15 @@ class AIInsightsProvider extends ChangeNotifier {
       ..sort((a, b) => b.value.compareTo(a.value));
 
     final recommendations = <SavingsRecommendation>[];
-
     for (final entry in sorted.take(3)) {
       final category = entry.key;
       final current = entry.value;
       final prev = prevMonth[category] ?? current;
-
-      // Recommend 15% reduction from whichever is lower (current or prev avg)
       final baseline = current < prev ? current : (current + prev) / 2;
       final recommended = baseline * 0.85;
       final savings = current - recommended;
 
       if (savings > 100) {
-        // Only suggest if saving >PKR 100 is meaningful
         recommendations.add(
           SavingsRecommendation(
             category: category,
@@ -348,21 +359,18 @@ class AIInsightsProvider extends ChangeNotifier {
         );
       }
     }
-
     return recommendations;
   }
 
-  // ══════════════════════════════════════════════════════
+  // ════════════════════════════════════════
   // 5. BUILD INSIGHT CARDS
-  // Combines anomalies, predictions, health, recommendations
-  // ══════════════════════════════════════════════════════
+  // ════════════════════════════════════════
 
   List<AIInsight> _buildInsights(List<Transaction> transactions) {
     final insights = <AIInsight>[];
     final now = DateTime.now();
     int id = 1;
 
-    // Anomaly insights
     for (final anomaly in _anomalies) {
       insights.add(
         AIInsight(
@@ -380,14 +388,13 @@ class AIInsightsProvider extends ChangeNotifier {
       );
     }
 
-    // Prediction insight
     if (_prediction != null) {
       insights.add(
         AIInsight(
           id: '${id++}',
           title: 'Next Month Prediction',
           description:
-              'Based on your spending pattern, you\'ll likely spend PKR ${_prediction!.predictedAmount.toStringAsFixed(0)} next month. '
+              'Based on your pattern, you\'ll likely spend PKR ${_prediction!.predictedAmount.toStringAsFixed(0)} next month. '
               '(${(_prediction!.confidence * 100).toInt()}% confidence)',
           type: InsightType.prediction,
           priority: InsightPriority.medium,
@@ -396,15 +403,14 @@ class AIInsightsProvider extends ChangeNotifier {
       );
     }
 
-    // Health score insight
     if (_healthScore != null) {
       insights.add(
         AIInsight(
           id: '${id++}',
           title: 'Financial Health Score',
           description:
-              'Your financial health score is ${_healthScore!.score.toInt()}/100 (${_healthScore!.rating.toUpperCase()}). '
-              '${_healthScore!.improvements.isNotEmpty ? _healthScore!.improvements.first : "Keep up the great work!"}',
+              'Your score is ${_healthScore!.score.toInt()}/100 (${_healthScore!.rating.toUpperCase()}). '
+              '${_healthScore!.improvements.isNotEmpty ? _healthScore!.improvements.first : "Keep it up!"}',
           type: InsightType.achievement,
           priority: _healthScore!.score < 50
               ? InsightPriority.high
@@ -414,15 +420,14 @@ class AIInsightsProvider extends ChangeNotifier {
       );
     }
 
-    // Recommendation insights
     for (final rec in _recommendations.take(2)) {
       insights.add(
         AIInsight(
           id: '${id++}',
           title: '${rec.category} Savings Opportunity',
           description:
-              'You could save PKR ${rec.potentialSavings.toStringAsFixed(0)}/month '
-              'by reducing ${rec.category} spending by 15%. ${rec.reason}.',
+              'Save PKR ${rec.potentialSavings.toStringAsFixed(0)}/month by reducing '
+              '${rec.category} by 15%. ${rec.reason}.',
           type: InsightType.recommendation,
           priority: InsightPriority.medium,
           createdAt: now,
@@ -430,39 +435,35 @@ class AIInsightsProvider extends ChangeNotifier {
       );
     }
 
-    // Spending tip (always show if data exists)
-    final now2 = DateTime.now();
-    final thisMonthExpense = transactions
+    final thisExpense = transactions
         .where(
           (t) =>
               t.isExpense &&
-              t.date.year == now2.year &&
-              t.date.month == now2.month,
+              t.date.year == now.year &&
+              t.date.month == now.month,
         )
         .fold(0.0, (sum, t) => sum + t.amount);
-    final thisMonthIncome = transactions
+    final thisIncome = transactions
         .where(
           (t) =>
               t.isIncome &&
-              t.date.year == now2.year &&
-              t.date.month == now2.month,
+              t.date.year == now.year &&
+              t.date.month == now.month,
         )
         .fold(0.0, (sum, t) => sum + t.amount);
 
-    if (thisMonthIncome > 0) {
-      final savingsRate =
-          ((thisMonthIncome - thisMonthExpense) / thisMonthIncome * 100).clamp(
-            0,
-            100,
-          );
+    if (thisIncome > 0) {
+      final savingsRate = ((thisIncome - thisExpense) / thisIncome * 100).clamp(
+        0.0,
+        100.0,
+      );
       insights.add(
         AIInsight(
           id: '${id++}',
           title: 'This Month\'s Savings Rate',
           description: savingsRate >= 20
-              ? 'Great job! You\'ve saved ${savingsRate.toInt()}% of your income this month. Keep it up!'
-              : 'Your current savings rate is ${savingsRate.toInt()}%. '
-                    'Financial experts recommend saving at least 20% of income.',
+              ? 'Great job! You\'ve saved ${savingsRate.toInt()}% of income this month!'
+              : 'Your savings rate is ${savingsRate.toInt()}%. Aim for at least 20%.',
           type: InsightType.tip,
           priority: savingsRate < 10
               ? InsightPriority.high
@@ -475,22 +476,19 @@ class AIInsightsProvider extends ChangeNotifier {
     return insights;
   }
 
-  // ══════════════════════════════════════════════════════
-  // HELPER METHODS
-  // ══════════════════════════════════════════════════════
+  // ════════════════════════════════════════
+  // HELPERS
+  // ════════════════════════════════════════
 
-  /// Returns total expenses per category for a given month
   Map<String, double> _getMonthExpenses(
     List<Transaction> transactions,
     int year,
     int month,
   ) {
-    // Handle month overflow (e.g. month -1 = previous year December)
     while (month <= 0) {
       month += 12;
       year -= 1;
     }
-
     final Map<String, double> result = {};
     for (final t in transactions) {
       if (t.isExpense && t.date.year == year && t.date.month == month) {
@@ -500,7 +498,6 @@ class AIInsightsProvider extends ChangeNotifier {
     return result;
   }
 
-  /// Returns total expense amount for a given month
   double _getTotalMonthExpense(
     List<Transaction> transactions,
     int year,
@@ -527,48 +524,17 @@ class AIInsightsProvider extends ChangeNotifier {
   List<String> _getActionSteps(String category) {
     switch (category.toLowerCase()) {
       case 'food':
-        return [
-          'Plan meals in advance',
-          'Cook at home more often',
-          'Buy groceries in bulk',
-          'Avoid impulse restaurant visits',
-        ];
+        return ['Plan meals in advance', 'Cook at home more often'];
       case 'transport':
-        return [
-          'Use public transport where possible',
-          'Carpool with colleagues',
-          'Combine errands into single trips',
-        ];
+        return ['Use public transport', 'Carpool with colleagues'];
       case 'entertainment':
-        return [
-          'Review and cancel unused subscriptions',
-          'Look for free entertainment options',
-          'Set a fixed monthly entertainment budget',
-        ];
+        return ['Review unused subscriptions', 'Set monthly limit'];
       case 'shopping':
-        return [
-          'Wait 48 hours before non-essential purchases',
-          'Use a shopping list and stick to it',
-          'Compare prices before buying',
-        ];
-      case 'bills':
-        return [
-          'Review all recurring subscriptions',
-          'Negotiate better rates on utilities',
-          'Switch to more economical plans',
-        ];
+        return ['Wait 48h before buying', 'Compare prices first'];
       default:
-        return [
-          'Review your recent spending in this category',
-          'Set a monthly limit for $category',
-          'Track every $category expense carefully',
-        ];
+        return ['Review your $category spending', 'Set a monthly limit'];
     }
   }
-
-  // ══════════════════════════════════════════════════════
-  // INDIVIDUAL ACTIONS
-  // ══════════════════════════════════════════════════════
 
   Future<void> markInsightAsRead(String insightId) async {
     final index = _insights.indexWhere((i) => i.id == insightId);
@@ -592,6 +558,7 @@ class AIInsightsProvider extends ChangeNotifier {
     _healthScore = null;
     _anomalies = [];
     _recommendations = [];
+    _notifiedAnomalies.clear();
     notifyListeners();
   }
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import '../Models/budget.dart';
 import '../Services/database_service.dart';
+import '../Services/notification_service.dart';
 
 class BudgetProvider extends ChangeNotifier {
   List<Budget> _budgets = [];
@@ -9,7 +10,10 @@ class BudgetProvider extends ChangeNotifier {
 
   final DatabaseService _dbService = DatabaseService.instance;
 
-  // Getters
+  // Track which budgets have been notified in this session
+  // to avoid spamming the user on every sync
+  final Set<String> _notifiedThisSession = {};
+
   List<Budget> get budgets => _budgets;
   bool get isLoading => _isLoading;
   String? get error => _error;
@@ -25,18 +29,16 @@ class BudgetProvider extends ChangeNotifier {
         (b) =>
             b.category.toLowerCase() == category.toLowerCase() && b.isCurrent,
       );
-    } catch (e) {
+    } catch (_) {
       return null;
     }
   }
 
-  BudgetSummary getBudgetSummary() {
-    return BudgetSummary.fromBudgets(currentMonthBudgets);
-  }
+  BudgetSummary getBudgetSummary() =>
+      BudgetSummary.fromBudgets(currentMonthBudgets);
 
-  List<Budget> getBudgetsByStatus(BudgetStatus status) {
-    return currentMonthBudgets.where((b) => b.status == status).toList();
-  }
+  List<Budget> getBudgetsByStatus(BudgetStatus status) =>
+      currentMonthBudgets.where((b) => b.status == status).toList();
 
   bool isBudgetExceeded(String category) =>
       getBudgetByCategory(category)?.isExceeded ?? false;
@@ -44,22 +46,19 @@ class BudgetProvider extends ChangeNotifier {
   bool isBudgetNearLimit(String category) =>
       getBudgetByCategory(category)?.isNearLimit ?? false;
 
-  // ========== LOAD ==========
+  // ════════════════════════════════════════
+  // LOAD
+  // ════════════════════════════════════════
 
-  /// Load budgets from DB and calculate real spending from transactions
   Future<void> loadBudgets() async {
     try {
       _isLoading = true;
       _error = null;
       notifyListeners();
 
-      // 1. Load stored budget limits from DB
       final storedBudgets = await _dbService.getAllBudgets();
-
-      // 2. Get real monthly spending per category from transactions table
       final spending = await _dbService.getMonthlySpendingByCategory();
 
-      // 3. Merge: attach real spending to each budget
       _budgets = storedBudgets.map((budget) {
         final spent =
             spending[budget.category] ??
@@ -72,19 +71,18 @@ class BudgetProvider extends ChangeNotifier {
         return budget.copyWith(used: spent);
       }).toList();
 
-      print('✅ Loaded ${_budgets.length} budgets with real spending data');
-
       _isLoading = false;
       notifyListeners();
     } catch (e) {
       _error = e.toString();
       _isLoading = false;
-      print('❌ Error loading budgets: $e');
       notifyListeners();
     }
   }
 
-  // ========== ADD ==========
+  // ════════════════════════════════════════
+  // ADD
+  // ════════════════════════════════════════
 
   Future<void> addBudget(Budget budget) async {
     try {
@@ -92,7 +90,6 @@ class BudgetProvider extends ChangeNotifier {
       _error = null;
       notifyListeners();
 
-      // Check if budget for this category already exists this month
       final existing = getBudgetByCategory(budget.category);
       if (existing != null) {
         throw Exception(
@@ -100,17 +97,11 @@ class BudgetProvider extends ChangeNotifier {
         );
       }
 
-      // Save to DB
       await _dbService.createBudget(budget);
 
-      // Get real spending for this category and attach it
       final spending = await _dbService.getMonthlySpendingByCategory();
       final spent = spending[budget.category] ?? 0.0;
-      final budgetWithSpending = budget.copyWith(used: spent);
-
-      _budgets.add(budgetWithSpending);
-
-      print('✅ Budget added: ${budget.category}');
+      _budgets.add(budget.copyWith(used: spent));
 
       _isLoading = false;
       notifyListeners();
@@ -122,7 +113,9 @@ class BudgetProvider extends ChangeNotifier {
     }
   }
 
-  // ========== UPDATE ==========
+  // ════════════════════════════════════════
+  // UPDATE
+  // ════════════════════════════════════════
 
   Future<void> updateBudget(Budget budget) async {
     try {
@@ -131,13 +124,8 @@ class BudgetProvider extends ChangeNotifier {
       notifyListeners();
 
       await _dbService.updateBudget(budget);
-
       final index = _budgets.indexWhere((b) => b.id == budget.id);
-      if (index != -1) {
-        _budgets[index] = budget;
-      }
-
-      print('✅ Budget updated: ${budget.category}');
+      if (index != -1) _budgets[index] = budget;
 
       _isLoading = false;
       notifyListeners();
@@ -149,7 +137,9 @@ class BudgetProvider extends ChangeNotifier {
     }
   }
 
-  // ========== DELETE ==========
+  // ════════════════════════════════════════
+  // DELETE
+  // ════════════════════════════════════════
 
   Future<void> deleteBudget(String budgetId) async {
     try {
@@ -159,8 +149,7 @@ class BudgetProvider extends ChangeNotifier {
 
       await _dbService.deleteBudget(budgetId);
       _budgets.removeWhere((b) => b.id == budgetId);
-
-      print('✅ Budget deleted: $budgetId');
+      _notifiedThisSession.remove(budgetId);
 
       _isLoading = false;
       notifyListeners();
@@ -172,10 +161,11 @@ class BudgetProvider extends ChangeNotifier {
     }
   }
 
-  // ========== SYNC WITH TRANSACTIONS ==========
+  // ════════════════════════════════════════
+  // SYNC — called after every expense add/edit/delete
+  // This is the KEY method — it updates spending AND fires notifications
+  // ════════════════════════════════════════
 
-  /// Called automatically after a new expense transaction is added.
-  /// Re-fetches spending from DB so budget 'used' values are always accurate.
   Future<void> syncWithTransactions() async {
     try {
       if (_budgets.isEmpty) return;
@@ -192,27 +182,69 @@ class BudgetProvider extends ChangeNotifier {
         return budget.copyWith(used: spent);
       }).toList();
 
-      print('🔄 Budget spending synced with transactions');
       notifyListeners();
+
+      // ── Fire notifications for budgets crossing the 80% threshold ──
+      await _checkAndNotifyBudgets();
     } catch (e) {
-      print('❌ Error syncing budgets: $e');
+      print('❌ syncWithTransactions: $e');
     }
   }
 
-  // ========== RESET MONTHLY ==========
+  // ════════════════════════════════════════
+  // BUDGET ALERT NOTIFICATIONS
+  // Fires a push notification when a budget first crosses 80% or 100%
+  // in this session. Uses a composite key (id + level) so it notifies
+  // once at 80% and again if the budget is then exceeded (100%).
+  // ════════════════════════════════════════
 
-  /// Creates fresh budgets for the new month (same limits, zero spending)
+  // Called by MainNavigation on launch
+  Future<void> checkAndNotify({required bool enabled}) async {
+    if (!enabled) return;
+    await _checkAndNotifyBudgets();
+  }
+
+  Future<void> _checkAndNotifyBudgets({double threshold = 80.0}) async {
+    for (final budget in currentMonthBudgets) {
+      final pct = budget.percentageUsed;
+
+      // Determine notification level
+      final String? level = pct >= 100
+          ? 'exceeded'
+          : pct >= threshold
+          ? 'warning'
+          : null;
+
+      if (level == null) continue;
+
+      final notifyKey = '${budget.id}_$level';
+      if (_notifiedThisSession.contains(notifyKey)) continue;
+
+      _notifiedThisSession.add(notifyKey);
+
+      await NotificationService.instance.showBudgetAlertNotification(
+        category: budget.category,
+        usedAmount: budget.used,
+        limitAmount: budget.limit,
+        percentage: pct,
+      );
+
+      print('🔔 Budget alert ($level): ${budget.category} at ${pct.toInt()}%');
+    }
+  }
+
+  // ════════════════════════════════════════
+  // RESET MONTHLY
+  // ════════════════════════════════════════
+
   Future<void> resetMonthlyBudgets() async {
     try {
       _isLoading = true;
       _error = null;
       notifyListeners();
 
-      for (var budget in currentMonthBudgets) {
-        // Mark old budget inactive
+      for (final budget in currentMonthBudgets) {
         await _dbService.updateBudget(budget.copyWith(isActive: false));
-
-        // Create new budget for current month
         final newBudget = Budget.monthly(
           id: '${budget.id}_${DateTime.now().millisecondsSinceEpoch}',
           category: budget.category,
@@ -221,7 +253,7 @@ class BudgetProvider extends ChangeNotifier {
         await _dbService.createBudget(newBudget);
       }
 
-      // Reload fresh
+      _notifiedThisSession.clear();
       await loadBudgets();
     } catch (e) {
       _error = e.toString();
@@ -233,6 +265,7 @@ class BudgetProvider extends ChangeNotifier {
 
   void clearBudgets() {
     _budgets = [];
+    _notifiedThisSession.clear();
     notifyListeners();
   }
 }

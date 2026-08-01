@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:spendwise_2/Models/user.dart';
 import '../../Core/constants/app_strings.dart';
 import '../../Core/constants/app_colors.dart';
 import '../../Providers/user_provider.dart';
 import 'profile_page.dart';
 import 'security_page.dart';
-import 'categories_management_page.dart';
 import 'reports_page.dart';
+import 'categories_management_page.dart';
 import 'help_page.dart';
 import 'about_page.dart';
 
@@ -21,6 +20,14 @@ class SettingsPage extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
+        leading: IconButton(
+          icon: const Icon(
+            Icons.arrow_back_ios_new,
+            color: AppColors.textPrimary,
+            size: 18,
+          ),
+          onPressed: () => Navigator.pop(context),
+        ),
         title: const Text(
           AppStrings.settings,
           style: TextStyle(
@@ -28,132 +35,144 @@ class SettingsPage extends StatelessWidget {
             color: AppColors.textPrimary,
           ),
         ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
-          onPressed: () => Navigator.pop(context),
-        ),
       ),
       body: Consumer<UserProvider>(
         builder: (context, userProvider, _) {
-          final prefs = userProvider.preferences;
-
           return ListView(
-            padding: const EdgeInsets.only(bottom: 40),
+            padding: const EdgeInsets.only(bottom: 32),
             children: [
-              // ── Profile Header (no edit button) ──
-              _buildProfileHeader(context, userProvider),
+              // ── Profile header card ──
+              _ProfileHeaderCard(userProvider: userProvider),
 
-              // ── Profile Section ──
-              _buildSectionHeader('Profile'),
-              _buildTile(
+              // ── Profile ──
+              _sectionHeader('Profile'),
+              _tile(
                 context,
                 icon: Icons.person_outline,
                 title: AppStrings.userDetails,
                 subtitle: userProvider.userName,
-                onTap: () => _navigate(context, const ProfilePage()),
-              ),
-              _buildTile(
-                context,
-                icon: Icons.currency_exchange,
-                title: AppStrings.currency,
-                subtitle: prefs?.currency ?? 'PKR',
-                onTap: () => _showCurrencyPicker(context, userProvider),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ProfilePage()),
+                ),
               ),
 
               // ── Appearance ──
-              _buildSectionHeader(AppStrings.appearance),
-              _buildTile(
+              _sectionHeader('Appearance'),
+              _tile(
                 context,
                 icon: Icons.palette_outlined,
                 title: AppStrings.theme,
-                subtitle: _themeLabel(prefs?.theme ?? 'dark'),
+                subtitle: _themeLabel(userProvider.theme),
                 onTap: () => _showThemePicker(context, userProvider),
+              ),
+              _tile(
+                context,
+                icon: Icons.currency_exchange,
+                title: AppStrings.currency,
+                subtitle: userProvider.currency,
+                onTap: () => _showCurrencyPicker(context, userProvider),
               ),
 
               // ── Notifications ──
-              _buildSectionHeader(AppStrings.notifications),
-              _buildSwitchTile(
+              _sectionHeader(AppStrings.notifications),
+              _switchTile(
                 context,
                 icon: Icons.account_balance_wallet_outlined,
                 title: AppStrings.budgetAlerts,
-                subtitle: 'Alert when budget is near limit',
-                value: prefs?.budgetAlertsEnabled ?? true,
+                subtitle: 'Alert when spending reaches 80% of budget',
+                value: userProvider.preferences?.budgetAlertsEnabled ?? true,
                 onChanged: (val) =>
                     userProvider.toggleNotification('budget', val),
               ),
-              _buildSwitchTile(
+              _switchTile(
                 context,
                 icon: Icons.flag_outlined,
                 title: AppStrings.goalReminders,
-                subtitle: 'Remind about upcoming goal deadlines',
-                value: prefs?.goalRemindersEnabled ?? true,
+                subtitle: 'Remind when goal deadlines are near',
+                value: userProvider.preferences?.goalRemindersEnabled ?? true,
                 onChanged: (val) =>
                     userProvider.toggleNotification('goal', val),
               ),
-              _buildSwitchTile(
+              _switchTile(
                 context,
                 icon: Icons.analytics_outlined,
                 title: AppStrings.aiAnomalyWarnings,
-                subtitle: 'Warn about unusual spending patterns',
-                value: prefs?.aiAnomalyWarningsEnabled ?? true,
+                subtitle: 'Alert when unusual spending is detected',
+                value:
+                    userProvider.preferences?.aiAnomalyWarningsEnabled ?? true,
                 onChanged: (val) =>
                     userProvider.toggleNotification('anomaly', val),
               ),
 
               // ── Security ──
-              _buildSectionHeader(AppStrings.dataAndSecurity),
-              _buildTile(
+              _sectionHeader(AppStrings.dataAndSecurity),
+              _tile(
                 context,
                 icon: Icons.lock_outline,
-                title: 'Security & PIN',
-                subtitle: 'Manage PIN and biometric access',
-                onTap: () => _navigate(context, const SecurityPage()),
+                title: 'App Lock & Biometric',
+                subtitle: 'PIN and fingerprint settings',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SecurityPage()),
+                ),
               ),
 
               // ── Categories ──
-              _buildSectionHeader('Categories'),
-              _buildTile(
+              _sectionHeader('Categories'),
+              _tile(
                 context,
                 icon: Icons.category_outlined,
                 title: AppStrings.categoriesManagement,
-                subtitle: 'Manage your spending categories',
-                onTap: () =>
-                    _navigate(context, const CategoriesManagementPage()),
+                subtitle: 'Add and manage custom categories',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const CategoriesManagementPage(),
+                  ),
+                ),
               ),
 
               // ── Reports ──
-              _buildSectionHeader('Reports'),
-              _buildTile(
+              _sectionHeader('Reports'),
+              _tile(
                 context,
                 icon: Icons.assessment_outlined,
                 title: AppStrings.reportsAndHistory,
-                subtitle: 'View monthly spending reports',
-                onTap: () => _navigate(context, const ReportsPage()),
+                subtitle: 'Monthly income and expense breakdown',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ReportsPage()),
+                ),
               ),
 
               // ── Help & About ──
-              _buildSectionHeader('Help & About'),
-              _buildTile(
+              _sectionHeader('Help & About'),
+              _tile(
                 context,
                 icon: Icons.help_outline,
                 title: AppStrings.helpAndSupport,
-                subtitle: 'FAQs and support',
-                onTap: () => _navigate(context, const HelpPage()),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const HelpPage()),
+                ),
               ),
-              _buildTile(
+              _tile(
                 context,
                 icon: Icons.info_outline,
                 title: AppStrings.aboutApp,
-                subtitle: 'Version 1.0.0',
-                onTap: () => _navigate(context, const AboutPage()),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AboutPage()),
+                ),
               ),
 
-              const SizedBox(height: 32),
-              Center(
+              const SizedBox(height: 20),
+              const Center(
                 child: Text(
-                  'SpendWise v1.0.0',
+                  'SpendWise v1.0.0 • SSUET FYP 2022F',
                   style: TextStyle(
-                    color: AppColors.textLight.withOpacity(0.5),
+                    color: AppColors.textSecondary,
                     fontSize: 12,
                   ),
                 ),
@@ -165,16 +184,314 @@ class SettingsPage extends StatelessWidget {
     );
   }
 
-  // ── Profile Header — no edit button, tapping navigates to profile ──
-  Widget _buildProfileHeader(BuildContext context, UserProvider provider) {
+  // ── Theme picker ──
+  void _showThemePicker(BuildContext context, UserProvider userProvider) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.cardBackground,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _sheetHandle(),
+              const SizedBox(height: 16),
+              const Text(
+                'Choose Theme',
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 16),
+              ...['light', 'dark', 'system'].map((t) {
+                final isSelected = userProvider.theme == t;
+                final label = t == 'light'
+                    ? '☀️  Light'
+                    : t == 'dark'
+                    ? '🌙  Dark'
+                    : '📱  System Default';
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(
+                    label,
+                    style: const TextStyle(color: AppColors.textPrimary),
+                  ),
+                  trailing: isSelected
+                      ? const Icon(Icons.check_circle, color: AppColors.primary)
+                      : null,
+                  onTap: () async {
+                    await userProvider.changeTheme(t);
+                    if (context.mounted) Navigator.pop(context);
+                  },
+                );
+              }),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // ── Currency picker ──
+  void _showCurrencyPicker(BuildContext context, UserProvider userProvider) {
+    final currencies = [
+      {'code': 'PKR', 'name': 'Pakistani Rupee', 'symbol': '₨'},
+      {'code': 'USD', 'name': 'US Dollar', 'symbol': '\$'},
+      {'code': 'EUR', 'name': 'Euro', 'symbol': '€'},
+      {'code': 'GBP', 'name': 'British Pound', 'symbol': '£'},
+      {'code': 'AED', 'name': 'UAE Dirham', 'symbol': 'د.إ'},
+      {'code': 'SAR', 'name': 'Saudi Riyal', 'symbol': '﷼'},
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.cardBackground,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _sheetHandle(),
+              const SizedBox(height: 16),
+              const Text(
+                'Choose Currency',
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.4,
+                ),
+                child: ListView(
+                  shrinkWrap: true,
+                  children: currencies.map((c) {
+                    final isSelected = userProvider.currency == c['code'];
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Center(
+                          child: Text(
+                            c['symbol']!,
+                            style: const TextStyle(
+                              color: AppColors.primary,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                      title: Text(
+                        c['code']!,
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      subtitle: Text(
+                        c['name']!,
+                        style: const TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 12,
+                        ),
+                      ),
+                      trailing: isSelected
+                          ? const Icon(
+                              Icons.check_circle,
+                              color: AppColors.primary,
+                            )
+                          : null,
+                      onTap: () async {
+                        await userProvider.changeCurrency(c['code']!);
+                        if (context.mounted) Navigator.pop(context);
+                      },
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  String _themeLabel(String theme) {
+    switch (theme) {
+      case 'dark':
+        return 'Dark';
+      case 'system':
+        return 'System Default';
+      default:
+        return 'Light';
+    }
+  }
+
+  Widget _sheetHandle() => Center(
+    child: Container(
+      width: 40,
+      height: 4,
+      decoration: BoxDecoration(
+        color: AppColors.textLight,
+        borderRadius: BorderRadius.circular(2),
+      ),
+    ),
+  );
+
+  Widget _sectionHeader(String title) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 24, 16, 4),
+    child: Text(
+      title.toUpperCase(),
+      style: const TextStyle(
+        fontSize: 11,
+        fontWeight: FontWeight.w700,
+        color: AppColors.primary,
+        letterSpacing: 0.8,
+      ),
+    ),
+  );
+
+  Widget _tile(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    String? subtitle,
+    required VoidCallback onTap,
+  }) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
+      decoration: BoxDecoration(
+        color: AppColors.cardBackground,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withOpacity(0.06)),
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+        leading: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: AppColors.primary.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, color: AppColors.primary, size: 20),
+        ),
+        title: Text(
+          title,
+          style: const TextStyle(
+            color: AppColors.textPrimary,
+            fontWeight: FontWeight.w600,
+            fontSize: 14,
+          ),
+        ),
+        subtitle: subtitle != null
+            ? Text(
+                subtitle,
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 12,
+                ),
+              )
+            : null,
+        trailing: const Icon(
+          Icons.chevron_right,
+          color: AppColors.textSecondary,
+          size: 20,
+        ),
+        onTap: onTap,
+      ),
+    );
+  }
+
+  Widget _switchTile(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    String? subtitle,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
+      decoration: BoxDecoration(
+        color: AppColors.cardBackground,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withOpacity(0.06)),
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+        leading: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: AppColors.primary.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, color: AppColors.primary, size: 20),
+        ),
+        title: Text(
+          title,
+          style: const TextStyle(
+            color: AppColors.textPrimary,
+            fontWeight: FontWeight.w600,
+            fontSize: 14,
+          ),
+        ),
+        subtitle: subtitle != null
+            ? Text(
+                subtitle,
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 11,
+                ),
+              )
+            : null,
+        trailing: Switch(
+          value: value,
+          onChanged: onChanged,
+          activeColor: AppColors.primary,
+        ),
+      ),
+    );
+  }
+}
+
+// ── Profile header card at top of settings ──
+class _ProfileHeaderCard extends StatelessWidget {
+  final UserProvider userProvider;
+  const _ProfileHeaderCard({required this.userProvider});
+
+  @override
+  Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => _navigate(context, const ProfilePage()),
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const ProfilePage()),
+      ),
       child: Container(
-        margin: const EdgeInsets.all(16),
-        padding: const EdgeInsets.all(20),
+        margin: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+        padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
           gradient: const LinearGradient(
-            colors: [Color(0xFF667EEA), Color(0xFF764BA2)],
+            colors: [Color(0xFF1F3864), Color(0xFF2E75B6)],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
@@ -183,14 +500,14 @@ class SettingsPage extends StatelessWidget {
         child: Row(
           children: [
             CircleAvatar(
-              radius: 30,
+              radius: 28,
               backgroundColor: Colors.white.withOpacity(0.2),
               child: Text(
-                provider.userInitials,
+                userProvider.userInitials,
                 style: const TextStyle(
                   color: Colors.white,
-                  fontSize: 22,
                   fontWeight: FontWeight.bold,
+                  fontSize: 20,
                 ),
               ),
             ),
@@ -200,288 +517,28 @@ class SettingsPage extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    provider.userName,
+                    userProvider.userName,
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 18,
                       fontWeight: FontWeight.bold,
+                      fontSize: 16,
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 2),
                   Text(
-                    provider.userEmail,
+                    userProvider.userEmail.isNotEmpty
+                        ? userProvider.userEmail
+                        : 'Tap to edit profile',
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.8),
-                      fontSize: 13,
+                      fontSize: 12,
                     ),
                   ),
                 ],
               ),
             ),
-            // Chevron instead of edit button
-            Icon(Icons.chevron_right, color: Colors.white.withOpacity(0.7)),
+            const Icon(Icons.chevron_right, color: Colors.white, size: 22),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSectionHeader(String title) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 6),
-      child: Text(
-        title.toUpperCase(),
-        style: const TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-          color: AppColors.primary,
-          letterSpacing: 1.2,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTile(
-    BuildContext context, {
-    required IconData icon,
-    required String title,
-    String? subtitle,
-    required VoidCallback onTap,
-  }) {
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      leading: Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: AppColors.primary.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Icon(icon, color: AppColors.primary, size: 20),
-      ),
-      title: Text(
-        title,
-        style: const TextStyle(
-          color: AppColors.textPrimary,
-          fontWeight: FontWeight.w500,
-          fontSize: 15,
-        ),
-      ),
-      subtitle: subtitle != null
-          ? Text(
-              subtitle,
-              style: const TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 12,
-              ),
-            )
-          : null,
-      trailing: const Icon(
-        Icons.chevron_right,
-        color: AppColors.textLight,
-        size: 20,
-      ),
-      onTap: onTap,
-    );
-  }
-
-  Widget _buildSwitchTile(
-    BuildContext context, {
-    required IconData icon,
-    required String title,
-    String? subtitle,
-    required bool value,
-    required ValueChanged<bool> onChanged,
-  }) {
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      leading: Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: AppColors.primary.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Icon(icon, color: AppColors.primary, size: 20),
-      ),
-      title: Text(
-        title,
-        style: const TextStyle(
-          color: AppColors.textPrimary,
-          fontWeight: FontWeight.w500,
-          fontSize: 15,
-        ),
-      ),
-      subtitle: subtitle != null
-          ? Text(
-              subtitle,
-              style: const TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 12,
-              ),
-            )
-          : null,
-      trailing: Switch(
-        value: value,
-        onChanged: onChanged,
-        activeColor: AppColors.primary,
-      ),
-    );
-  }
-
-  void _navigate(BuildContext context, Widget page) {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => page));
-  }
-
-  String _themeLabel(String theme) {
-    switch (theme) {
-      case 'dark':
-        return 'Dark Mode';
-      case 'light':
-        return 'Light Mode';
-      default:
-        return 'System Default';
-    }
-  }
-
-  void _showThemePicker(BuildContext context, UserProvider provider) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppColors.cardBackground,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SizedBox(height: 12),
-          Container(
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: AppColors.textLight,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(height: 16),
-          const Text(
-            'Choose Theme',
-            style: TextStyle(
-              color: AppColors.textPrimary,
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 8),
-          ...[
-            ('light', 'Light Mode', Icons.light_mode),
-            ('dark', 'Dark Mode', Icons.dark_mode),
-            ('system', 'System Default', Icons.settings_brightness),
-          ].map((item) {
-            final isSelected = provider.preferences?.theme == item.$1;
-            return ListTile(
-              leading: Icon(
-                item.$3,
-                color: isSelected ? AppColors.primary : AppColors.textSecondary,
-              ),
-              title: Text(
-                item.$2,
-                style: TextStyle(
-                  color: isSelected ? AppColors.primary : AppColors.textPrimary,
-                ),
-              ),
-              trailing: isSelected
-                  ? const Icon(Icons.check, color: AppColors.primary)
-                  : null,
-              onTap: () {
-                provider.changeTheme(item.$1);
-                Navigator.pop(ctx);
-              },
-            );
-          }),
-          const SizedBox(height: 16),
-        ],
-      ),
-    );
-  }
-
-  // Fixed: use ListView inside a constrained height container to prevent overflow
-  void _showCurrencyPicker(BuildContext context, UserProvider provider) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppColors.cardBackground,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(ctx).size.height * 0.6,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 12),
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.textLight,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Select Currency',
-                style: TextStyle(
-                  color: AppColors.textPrimary,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
-              // ← Scrollable list — no more overflow
-              Flexible(
-                child: ListView(
-                  shrinkWrap: true,
-                  children: SupportedCurrencies.currencies.map((currency) {
-                    final isSelected =
-                        provider.preferences?.currency == currency['code'];
-                    return ListTile(
-                      leading: Text(
-                        currency['symbol']!,
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: isSelected
-                              ? AppColors.primary
-                              : AppColors.textPrimary,
-                        ),
-                      ),
-                      title: Text(
-                        currency['name']!,
-                        style: TextStyle(
-                          color: isSelected
-                              ? AppColors.primary
-                              : AppColors.textPrimary,
-                        ),
-                      ),
-                      subtitle: Text(
-                        currency['code']!,
-                        style: const TextStyle(color: AppColors.textSecondary),
-                      ),
-                      trailing: isSelected
-                          ? const Icon(Icons.check, color: AppColors.primary)
-                          : null,
-                      onTap: () {
-                        provider.changeCurrency(currency['code']!);
-                        Navigator.pop(ctx);
-                      },
-                    );
-                  }).toList(),
-                ),
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
         ),
       ),
     );

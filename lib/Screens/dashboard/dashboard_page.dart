@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:spendwise_2/Core/widgets/progress_widget.dart';
 import 'package:spendwise_2/Providers/ai_insights_provider.dart';
+import 'package:spendwise_2/Providers/budget_provider.dart';
 import 'package:spendwise_2/Providers/goal_provider.dart';
 import 'package:spendwise_2/Providers/transaction_provider.dart';
 import 'package:spendwise_2/Providers/user_provider.dart';
@@ -29,9 +30,7 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadData();
-    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadData());
   }
 
   Future<void> _loadData() async {
@@ -39,15 +38,304 @@ class _DashboardPageState extends State<DashboardPage> {
     final goalProvider = context.read<GoalProvider>();
     final aiProvider = context.read<AIInsightsProvider>();
 
-    // Load transactions and goals first
     await Future.wait([
       transactionProvider.loadTransactions(),
       goalProvider.loadGoals(),
     ]);
 
-    // Pass REAL transactions to AI insights engine
     await aiProvider.generateInsights(
       transactions: transactionProvider.transactions,
+    );
+  }
+
+  // ── Bell icon: show all notifications in bottom sheet ──
+  void _showNotificationsSheet(BuildContext context) {
+    final budgets = context.read<BudgetProvider>().currentMonthBudgets;
+    final alertBudgets = budgets.where((b) => b.percentageUsed >= 80).toList()
+      ..sort((a, b) => b.percentageUsed.compareTo(a.percentageUsed));
+
+    final anomalies = context.read<AIInsightsProvider>().anomalies;
+
+    final goals = context.read<GoalProvider>().activeGoals;
+    final goalAlerts = goals.where((g) {
+      if (g.isAchieved) return true;
+      if (g.isOverdue) return true;
+      final days = g.daysRemaining;
+      return days != null && days <= 7;
+    }).toList();
+
+    final totalAlerts =
+        alertBudgets.length + anomalies.length + goalAlerts.length;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.cardBackground,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) {
+        return ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.75,
+          ),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Handle
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: AppColors.textLight,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // Header
+                Row(
+                  children: [
+                    const Text(
+                      'Notifications',
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    if (totalAlerts > 0)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.error.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '$totalAlerts',
+                          style: const TextStyle(
+                            color: AppColors.error,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+
+                // ── All clear ──
+                if (totalAlerts == 0)
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: AppColors.success.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: AppColors.success.withOpacity(0.3),
+                      ),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(
+                          Icons.check_circle_outline,
+                          color: AppColors.success,
+                          size: 22,
+                        ),
+                        SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'All good! No alerts right now.',
+                            style: TextStyle(
+                              color: AppColors.success,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                // ── Budget Alerts ──
+                if (alertBudgets.isNotEmpty) ...[
+                  _sheetSectionHeader('💰 Budget Alerts', AppColors.error),
+                  const SizedBox(height: 8),
+                  ...alertBudgets.map((budget) {
+                    final isExceeded = budget.percentageUsed >= 100;
+                    final color = isExceeded
+                        ? AppColors.error
+                        : AppColors.warning;
+                    return _sheetCard(
+                      color: color,
+                      icon: isExceeded
+                          ? Icons.warning_rounded
+                          : Icons.trending_up,
+                      title: isExceeded
+                          ? '🚨 ${budget.category} budget exceeded!'
+                          : '⚠️ ${budget.category} at ${budget.percentageUsed.toInt()}%',
+                      subtitle:
+                          'PKR ${budget.used.toStringAsFixed(0)} used of PKR ${budget.limit.toStringAsFixed(0)}',
+                      badge: '${budget.percentageUsed.toInt()}%',
+                    );
+                  }),
+                  const SizedBox(height: 12),
+                ],
+
+                // ── Anomaly Warnings ──
+                if (anomalies.isNotEmpty) ...[
+                  _sheetSectionHeader(
+                    '🧠 AI Spending Alerts',
+                    AppColors.warning,
+                  ),
+                  const SizedBox(height: 8),
+                  ...anomalies.map((anomaly) {
+                    final isMajor = anomaly.severity == 'major';
+                    final color = isMajor ? AppColors.error : AppColors.warning;
+                    return _sheetCard(
+                      color: color,
+                      icon: Icons.auto_graph,
+                      title:
+                          '${anomaly.category} spending ${anomaly.deviation.toInt()}% above usual',
+                      subtitle:
+                          'PKR ${anomaly.actualAmount.toStringAsFixed(0)} vs avg PKR ${anomaly.expectedAmount.toStringAsFixed(0)}',
+                      badge: anomaly.severity.toUpperCase(),
+                    );
+                  }),
+                  const SizedBox(height: 12),
+                ],
+
+                // ── Goal Reminders ──
+                if (goalAlerts.isNotEmpty) ...[
+                  _sheetSectionHeader('🎯 Goal Reminders', AppColors.primary),
+                  const SizedBox(height: 8),
+                  ...goalAlerts.map((goal) {
+                    String title;
+                    String subtitle;
+                    Color color;
+                    IconData icon;
+
+                    if (goal.isAchieved) {
+                      title = '🎉 ${goal.name} — Goal reached!';
+                      subtitle = 'Mark it as complete to celebrate your win.';
+                      color = AppColors.success;
+                      icon = Icons.emoji_events_outlined;
+                    } else if (goal.isOverdue) {
+                      title = '⏰ ${goal.name} — Deadline passed';
+                      subtitle =
+                          '${goal.percentageCompleted.toInt()}% complete. Consider extending the deadline.';
+                      color = AppColors.error;
+                      icon = Icons.timer_off_outlined;
+                    } else {
+                      final days = goal.daysRemaining ?? 0;
+                      title = days == 0
+                          ? '📅 ${goal.name} — Due today!'
+                          : '📅 ${goal.name} — $days day${days == 1 ? '' : 's'} left';
+                      subtitle =
+                          '${goal.percentageCompleted.toInt()}% of PKR ${goal.targetAmount.toStringAsFixed(0)} saved';
+                      color = AppColors.primary;
+                      icon = Icons.flag_outlined;
+                    }
+
+                    return _sheetCard(
+                      color: color,
+                      icon: icon,
+                      title: title,
+                      subtitle: subtitle,
+                    );
+                  }),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _sheetSectionHeader(String title, Color color) {
+    return Text(
+      title,
+      style: TextStyle(
+        color: color,
+        fontSize: 13,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0.3,
+      ),
+    );
+  }
+
+  Widget _sheetCard({
+    required Color color,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    String? badge,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.07),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withOpacity(0.25)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: color,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (badge != null) ...[
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                badge,
+                style: TextStyle(
+                  color: color,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 10,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 
@@ -67,13 +355,51 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
         ),
         actions: [
-          // Notifications bell
-          IconButton(
-            icon: const Icon(
-              Icons.notifications_outlined,
-              color: AppColors.textPrimary,
-            ),
-            onPressed: () {},
+          // Bell → all notifications bottom sheet
+          Consumer3<BudgetProvider, AIInsightsProvider, GoalProvider>(
+            builder: (context, budgetProvider, aiProvider, goalProvider, _) {
+              final budgetAlerts = budgetProvider.currentMonthBudgets
+                  .where((b) => b.percentageUsed >= 80)
+                  .length;
+              final anomalyAlerts = aiProvider.anomalies.length;
+              final goalAlerts = goalProvider.activeGoals.where((g) {
+                if (g.isAchieved || g.isOverdue) return true;
+                final days = g.daysRemaining;
+                return days != null && days <= 7;
+              }).length;
+              final alertCount = budgetAlerts + anomalyAlerts + goalAlerts;
+              return Stack(
+                children: [
+                  IconButton(
+                    icon: const Icon(
+                      Icons.notifications_outlined,
+                      color: AppColors.textPrimary,
+                    ),
+                    onPressed: () => _showNotificationsSheet(context),
+                  ),
+                  if (alertCount > 0)
+                    Positioned(
+                      right: 8,
+                      top: 8,
+                      child: Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: const BoxDecoration(
+                          color: AppColors.error,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(
+                          '$alertCount',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
 
           // Settings gear
@@ -82,27 +408,23 @@ class _DashboardPageState extends State<DashboardPage> {
               Icons.settings_outlined,
               color: AppColors.textPrimary,
             ),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const SettingsPage()),
-              );
-            },
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SettingsPage()),
+            ),
           ),
 
-          // Profile avatar — opens ProfileSelectionPage to switch/add profiles
+          // Profile avatar → profile selection
           Consumer<UserProvider>(
             builder: (context, userProvider, _) {
               return GestureDetector(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) =>
-                          const ProfileSelectionPage(isLaunchScreen: false),
-                    ),
-                  );
-                },
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        const ProfileSelectionPage(isLaunchScreen: false),
+                  ),
+                ),
                 child: Container(
                   margin: const EdgeInsets.only(right: 12),
                   child: CircleAvatar(
@@ -124,7 +446,7 @@ class _DashboardPageState extends State<DashboardPage> {
         ],
       ),
       body: Consumer3<TransactionProvider, GoalProvider, AIInsightsProvider>(
-        builder: (context, transactionProvider, goalProvider, aiProvider, child) {
+        builder: (context, transactionProvider, goalProvider, aiProvider, _) {
           if (transactionProvider.isLoading) {
             return const Center(child: LoadingIndicator(size: 48));
           }
@@ -168,7 +490,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               final result = await Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (context) =>
+                                  builder: (_) =>
                                       const AddTransactionPage(type: 'income'),
                                 ),
                               );
@@ -186,7 +508,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               final result = await Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (context) =>
+                                  builder: (_) =>
                                       const AddTransactionPage(type: 'expense'),
                                 ),
                               );
@@ -252,16 +574,14 @@ class _DashboardPageState extends State<DashboardPage> {
                             ],
                           ),
                           const SizedBox(height: 10),
-                          ...anomalies
-                              .map((a) => _buildAnomalyCard(a))
-                              .toList(),
+                          ...anomalies.map(_buildAnomalyCard).toList(),
                         ],
                       ),
                     ),
                     const SizedBox(height: 24),
                   ],
 
-                  // Expense Distribution Chart
+                  // Expense Chart
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     child: Column(
@@ -323,6 +643,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       ],
                     ),
                   ),
+
                   const SizedBox(height: 12),
 
                   if (activeGoals.isEmpty)
@@ -335,8 +656,8 @@ class _DashboardPageState extends State<DashboardPage> {
                       ),
                     )
                   else
-                    ...activeGoals.map((goal) {
-                      return Padding(
+                    ...activeGoals.map(
+                      (goal) => Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16),
                         child: GoalProgressCard(
                           goalName: goal.name,
@@ -348,8 +669,8 @@ class _DashboardPageState extends State<DashboardPage> {
                               ? 'Save ${CurrencyFormatter.formatCompact(goal.requiredMonthlySavings!)} per month to reach your goal on time'
                               : 'Keep saving consistently to reach your goal',
                         ),
-                      );
-                    }).toList(),
+                      ),
+                    ),
 
                   const SizedBox(height: 100),
                 ],
@@ -364,8 +685,6 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _buildAnomalyCard(anomaly) {
     final isMajor = anomaly.severity == 'major';
     final color = isMajor ? AppColors.error : AppColors.warning;
-    final icon = isMajor ? Icons.warning_rounded : Icons.trending_up;
-
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(14),
@@ -383,7 +702,11 @@ class _DashboardPageState extends State<DashboardPage> {
               color: color.withOpacity(0.15),
               borderRadius: BorderRadius.circular(10),
             ),
-            child: Icon(icon, color: color, size: 18),
+            child: Icon(
+              isMajor ? Icons.warning_rounded : Icons.trending_up,
+              color: color,
+              size: 18,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -485,7 +808,6 @@ class QuickActionButton extends StatelessWidget {
                   color: Colors.white,
                   fontWeight: FontWeight.bold,
                   fontSize: 16,
-                  letterSpacing: 0.2,
                 ),
               ),
             ],

@@ -1,17 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import '../../../Core/constants/app_colors.dart';
-import '../../../Services/pin_service.dart';
+import '../../Core/constants/app_colors.dart';
+import '../../Services/pin_service.dart';
 
-/// Used for:
-/// 1. First-time PIN setup (isChanging: false)
-/// 2. Changing existing PIN (isChanging: true)
+/// Used for both setting a new PIN and changing an existing one.
+/// [isChanging] = true → first step verifies the old PIN.
 class PinSetupPage extends StatefulWidget {
   final bool isChanging;
-  final VoidCallback? onSuccess;
 
-  const PinSetupPage({Key? key, this.isChanging = false, this.onSuccess})
-    : super(key: key);
+  const PinSetupPage({Key? key, this.isChanging = false}) : super(key: key);
 
   @override
   State<PinSetupPage> createState() => _PinSetupPageState();
@@ -19,33 +15,33 @@ class PinSetupPage extends StatefulWidget {
 
 class _PinSetupPageState extends State<PinSetupPage>
     with SingleTickerProviderStateMixin {
-  // Steps: verify_old (if changing) → enter_new → confirm_new
-  String _step = 'enter_new';
-  String _enteredPin = '';
-  String _firstPin = '';
-  String _errorMessage = '';
-  bool _isLoading = false;
+  // Steps: verify_old → enter_new → confirm_new
+  // If not changing: enter_new → confirm_new
+  late String _step;
+  String _entered = '';
+  String _newPin = '';
+  String _error = '';
 
-  late AnimationController _shakeController;
-  late Animation<double> _shakeAnimation;
+  late AnimationController _shakeCtrl;
+  late Animation<double> _shakeAnim;
 
   @override
   void initState() {
     super.initState();
-    if (widget.isChanging) _step = 'verify_old';
-
-    _shakeController = AnimationController(
+    _step = widget.isChanging ? 'verify_old' : 'enter_new';
+    _shakeCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 400),
     );
-    _shakeAnimation = Tween<double>(begin: 0, end: 1).animate(
-      CurvedAnimation(parent: _shakeController, curve: Curves.elasticIn),
-    );
+    _shakeAnim = Tween<double>(
+      begin: 0,
+      end: 1,
+    ).animate(CurvedAnimation(parent: _shakeCtrl, curve: Curves.elasticIn));
   }
 
   @override
   void dispose() {
-    _shakeController.dispose();
+    _shakeCtrl.dispose();
     super.dispose();
   }
 
@@ -54,9 +50,9 @@ class _PinSetupPageState extends State<PinSetupPage>
       case 'verify_old':
         return 'Enter Current PIN';
       case 'enter_new':
-        return widget.isChanging ? 'Enter New PIN' : 'Set a PIN';
+        return 'Enter New PIN';
       case 'confirm_new':
-        return 'Confirm PIN';
+        return 'Confirm New PIN';
       default:
         return '';
     }
@@ -65,93 +61,84 @@ class _PinSetupPageState extends State<PinSetupPage>
   String get _subtitle {
     switch (_step) {
       case 'verify_old':
-        return 'Enter your current 4-digit PIN to continue';
+        return 'Enter your existing 4-digit PIN';
       case 'enter_new':
-        return 'Choose a 4-digit PIN to protect SpendWise';
+        return 'Choose a 4-digit PIN for your app lock';
       case 'confirm_new':
-        return 'Enter the same PIN again to confirm';
+        return 'Re-enter your PIN to confirm';
       default:
         return '';
     }
   }
 
-  void _onDigitTap(String digit) {
-    if (_enteredPin.length >= 4) return;
+  void _onKey(String digit) {
+    if (_entered.length >= 4) return;
     setState(() {
-      _enteredPin += digit;
-      _errorMessage = '';
+      _entered += digit;
+      _error = '';
     });
-    HapticFeedback.lightImpact();
-
-    if (_enteredPin.length == 4) {
-      Future.delayed(const Duration(milliseconds: 150), _processPin);
-    }
+    if (_entered.length == 4) _processStep();
   }
 
-  void _onBackspace() {
-    if (_enteredPin.isEmpty) return;
-    HapticFeedback.lightImpact();
-    setState(
-      () => _enteredPin = _enteredPin.substring(0, _enteredPin.length - 1),
-    );
+  void _onDelete() {
+    if (_entered.isEmpty) return;
+    setState(() => _entered = _entered.substring(0, _entered.length - 1));
   }
 
-  Future<void> _processPin() async {
-    setState(() => _isLoading = true);
+  Future<void> _processStep() async {
+    await Future.delayed(const Duration(milliseconds: 150));
 
-    switch (_step) {
-      case 'verify_old':
-        final valid = await PinService.instance.verifyPin(_enteredPin);
-        if (valid) {
-          setState(() {
-            _step = 'enter_new';
-            _enteredPin = '';
-            _isLoading = false;
-          });
-        } else {
-          _showError('Incorrect PIN. Try again.');
-        }
-        break;
-
-      case 'enter_new':
+    if (_step == 'verify_old') {
+      final correct = await PinService.instance.verifyPin(_entered);
+      if (correct) {
         setState(() {
-          _firstPin = _enteredPin;
-          _step = 'confirm_new';
-          _enteredPin = '';
-          _isLoading = false;
+          _step = 'enter_new';
+          _entered = '';
+          _error = '';
         });
-        break;
-
-      case 'confirm_new':
-        if (_enteredPin == _firstPin) {
-          await PinService.instance.savePin(_enteredPin);
-          setState(() => _isLoading = false);
-          HapticFeedback.heavyImpact();
-
-          if (widget.onSuccess != null) {
-            widget.onSuccess!();
-          } else if (mounted) {
-            Navigator.pop(context, true);
-          }
-        } else {
-          _showError("PINs don't match. Try again.");
-          setState(() {
-            _step = 'enter_new';
-            _firstPin = '';
-          });
+      } else {
+        _shakeCtrl.forward(from: 0);
+        setState(() {
+          _entered = '';
+          _error = 'Incorrect PIN. Try again.';
+        });
+      }
+    } else if (_step == 'enter_new') {
+      setState(() {
+        _newPin = _entered;
+        _entered = '';
+        _step = 'confirm_new';
+      });
+    } else if (_step == 'confirm_new') {
+      if (_entered == _newPin) {
+        await PinService.instance.savePin(_entered);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                widget.isChanging
+                    ? 'PIN changed successfully!'
+                    : 'PIN set successfully! App lock is now enabled.',
+              ),
+              backgroundColor: AppColors.success,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          );
+          Navigator.pop(context, true); // true = success
         }
-        break;
+      } else {
+        _shakeCtrl.forward(from: 0);
+        setState(() {
+          _entered = '';
+          _newPin = '';
+          _step = 'enter_new';
+          _error = 'PINs did not match. Please try again.';
+        });
+      }
     }
-  }
-
-  void _showError(String message) {
-    HapticFeedback.vibrate();
-    _shakeController.forward(from: 0);
-    setState(() {
-      _errorMessage = message;
-      _enteredPin = '';
-      _isLoading = false;
-    });
   }
 
   @override
@@ -162,41 +149,45 @@ class _PinSetupPageState extends State<PinSetupPage>
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
-          onPressed: () => Navigator.pop(context),
+          icon: const Icon(
+            Icons.arrow_back_ios_new,
+            color: AppColors.textPrimary,
+            size: 18,
+          ),
+          onPressed: () => Navigator.pop(context, false),
+        ),
+        title: Text(
+          widget.isChanging ? 'Change PIN' : 'Set PIN',
+          style: const TextStyle(
+            color: AppColors.textPrimary,
+            fontWeight: FontWeight.bold,
+          ),
         ),
       ),
       body: SafeArea(
         child: Column(
           children: [
-            const SizedBox(height: 40),
+            const Spacer(flex: 2),
 
             // Lock icon
             Container(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF667EEA), Color(0xFF764BA2)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+                color: AppColors.primary.withOpacity(0.12),
                 shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF667EEA).withOpacity(0.4),
-                    blurRadius: 20,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
+                border: Border.all(
+                  color: AppColors.primary.withOpacity(0.3),
+                  width: 2,
+                ),
               ),
               child: const Icon(
                 Icons.lock_outline,
-                color: Colors.white,
+                color: AppColors.primary,
                 size: 36,
               ),
             ),
 
-            const SizedBox(height: 24),
+            const SizedBox(height: 20),
 
             Text(
               _title,
@@ -208,24 +199,40 @@ class _PinSetupPageState extends State<PinSetupPage>
             ),
             const SizedBox(height: 8),
             Text(
-              _subtitle,
+              _error.isNotEmpty ? _error : _subtitle,
+              style: TextStyle(
+                color: _error.isNotEmpty
+                    ? AppColors.error
+                    : AppColors.textSecondary,
+                fontSize: 13,
+              ),
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 14,
+            ),
+
+            // Step indicator
+            Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (widget.isChanging)
+                    _stepDot(_step == 'verify_old', _step != 'verify_old'),
+                  _stepDot(_step == 'enter_new', _step == 'confirm_new'),
+                  _stepDot(_step == 'confirm_new', false),
+                ],
               ),
             ),
 
-            const SizedBox(height: 40),
+            const Spacer(),
 
-            // PIN dots with shake animation
+            // PIN dots
             AnimatedBuilder(
-              animation: _shakeAnimation,
+              animation: _shakeAnim,
               builder: (context, child) {
                 final offset =
-                    _shakeAnimation.value *
+                    _shakeAnim.value *
                     10 *
-                    ((_shakeAnimation.value * 10).toInt().isEven ? 1 : -1);
+                    ((_shakeAnim.value * 10).round().isEven ? 1 : -1);
                 return Transform.translate(
                   offset: Offset(offset, 0),
                   child: child,
@@ -233,20 +240,19 @@ class _PinSetupPageState extends State<PinSetupPage>
               },
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(4, (index) {
-                  final filled = index < _enteredPin.length;
-                  return AnimatedContainer(
-                    duration: const Duration(milliseconds: 150),
+                children: List.generate(4, (i) {
+                  final filled = i < _entered.length;
+                  return Container(
                     margin: const EdgeInsets.symmetric(horizontal: 10),
                     width: 18,
                     height: 18,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: filled ? AppColors.primary : Colors.transparent,
+                      color: filled ? AppColors.primary : AppColors.surface,
                       border: Border.all(
                         color: filled
                             ? AppColors.primary
-                            : AppColors.textSecondary,
+                            : AppColors.textSecondary.withOpacity(0.4),
                         width: 2,
                       ),
                       boxShadow: filled
@@ -254,7 +260,6 @@ class _PinSetupPageState extends State<PinSetupPage>
                               BoxShadow(
                                 color: AppColors.primary.withOpacity(0.4),
                                 blurRadius: 8,
-                                spreadRadius: 1,
                               ),
                             ]
                           : null,
@@ -264,106 +269,89 @@ class _PinSetupPageState extends State<PinSetupPage>
               ),
             ),
 
-            // Error message
-            const SizedBox(height: 16),
-            AnimatedOpacity(
-              opacity: _errorMessage.isNotEmpty ? 1.0 : 0.0,
-              duration: const Duration(milliseconds: 200),
-              child: Text(
-                _errorMessage,
-                style: const TextStyle(color: AppColors.error, fontSize: 13),
-              ),
-            ),
-
             const Spacer(),
 
-            // Number pad
+            // Keypad
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 40),
+              padding: const EdgeInsets.symmetric(horizontal: 48),
               child: Column(
                 children: [
-                  _buildRow(['1', '2', '3']),
+                  _keyRow(['1', '2', '3']),
                   const SizedBox(height: 16),
-                  _buildRow(['4', '5', '6']),
+                  _keyRow(['4', '5', '6']),
                   const SizedBox(height: 16),
-                  _buildRow(['7', '8', '9']),
+                  _keyRow(['7', '8', '9']),
                   const SizedBox(height: 16),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      const SizedBox(width: 72), // empty space
-                      _buildDigitButton('0'),
-                      _buildBackspaceButton(),
+                      const SizedBox(width: 72, height: 72),
+                      _digitButton('0'),
+                      _keyButton(
+                        child: Icon(
+                          Icons.backspace_outlined,
+                          color: _entered.isEmpty
+                              ? AppColors.textSecondary
+                              : AppColors.textPrimary,
+                          size: 24,
+                        ),
+                        onTap: _onDelete,
+                      ),
                     ],
                   ),
                 ],
               ),
             ),
 
-            const SizedBox(height: 40),
+            const Spacer(flex: 2),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildRow(List<String> digits) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-      children: digits.map(_buildDigitButton).toList(),
+  Widget _stepDot(bool isActive, bool isDone) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 250),
+      margin: const EdgeInsets.symmetric(horizontal: 4),
+      width: isActive ? 24 : 10,
+      height: 10,
+      decoration: BoxDecoration(
+        color: (isActive || isDone) ? AppColors.primary : AppColors.surface,
+        borderRadius: BorderRadius.circular(5),
+      ),
     );
   }
 
-  Widget _buildDigitButton(String digit) {
+  Widget _keyRow(List<String> digits) => Row(
+    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+    children: digits.map(_digitButton).toList(),
+  );
+
+  Widget _digitButton(String digit) => _keyButton(
+    child: Text(
+      digit,
+      style: const TextStyle(
+        color: AppColors.textPrimary,
+        fontSize: 26,
+        fontWeight: FontWeight.w500,
+      ),
+    ),
+    onTap: () => _onKey(digit),
+  );
+
+  Widget _keyButton({required Widget child, VoidCallback? onTap}) {
     return GestureDetector(
-      onTap: () => _onDigitTap(digit),
+      onTap: onTap,
       child: Container(
         width: 72,
         height: 72,
         decoration: BoxDecoration(
           color: AppColors.cardBackground,
           shape: BoxShape.circle,
-          border: Border.all(color: Colors.white.withOpacity(0.08)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.2),
-              blurRadius: 8,
-              offset: const Offset(0, 4),
-            ),
-          ],
+          border: Border.all(color: Colors.white.withOpacity(0.08), width: 1),
         ),
-        child: Center(
-          child: Text(
-            digit,
-            style: const TextStyle(
-              color: AppColors.textPrimary,
-              fontSize: 24,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBackspaceButton() {
-    return GestureDetector(
-      onTap: _onBackspace,
-      child: Container(
-        width: 72,
-        height: 72,
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white.withOpacity(0.05)),
-        ),
-        child: const Center(
-          child: Icon(
-            Icons.backspace_outlined,
-            color: AppColors.textSecondary,
-            size: 22,
-          ),
-        ),
+        child: Center(child: child),
       ),
     );
   }
