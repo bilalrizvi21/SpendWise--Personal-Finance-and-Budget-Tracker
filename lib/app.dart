@@ -33,27 +33,32 @@ class SpendWiseApp extends StatelessWidget {
             debugShowCheckedModeBanner: false,
             theme: AppThemes.lightTheme,
             darkTheme: AppThemes.darkTheme,
-            themeMode: userProvider.theme == 'dark'
-                ? ThemeMode.dark
-                : ThemeMode.light,
+            themeMode: _resolveThemeMode(userProvider.theme),
             home: const _AppEntry(),
           );
         },
       ),
     );
   }
+
+  ThemeMode _resolveThemeMode(String theme) {
+    switch (theme) {
+      case 'dark':
+        return ThemeMode.dark;
+      case 'system':
+        return ThemeMode.system;
+      default:
+        return ThemeMode.light;
+    }
+  }
 }
 
 /// Launch flow:
-///   1. Splash while initializing
-///   2. Check if app lock is enabled
-///      ├── YES → show AppLockScreen (PIN / biometric)
-///      │          └── on unlock → ProfileSelectionPage
-///      └── NO  → ProfileSelectionPage directly
-///
-/// ProfileSelectionPage handles:
-///   • No profiles → auto-pushes ProfileSetupPage
-///   • Profiles exist → user picks one → MainNavigationPage
+///   1. Splash while DB + prefs initialize
+///   2. Check PIN lock → show AppLockScreen if enabled
+///   3. ProfileSelectionPage (always shown on every launch)
+///      • No profiles → auto-pushes ProfileSetupPage
+///      • Profiles exist → user picks one → MainNavigationPage
 class _AppEntry extends StatefulWidget {
   const _AppEntry({Key? key}) : super(key: key);
 
@@ -73,7 +78,6 @@ class _AppEntryState extends State<_AppEntry> {
   }
 
   Future<void> _init() async {
-    // Load profiles in parallel with PIN check
     await Future.wait([
       context.read<UserProvider>().initializeUser(),
       _checkLock(),
@@ -83,28 +87,20 @@ class _AppEntryState extends State<_AppEntry> {
 
   Future<void> _checkLock() async {
     _lockEnabled = await PinService.instance.isAppLockEnabled();
-    // If no PIN is actually set (e.g. lock was enabled then PIN removed),
-    // treat as unlocked to avoid a dead-end screen.
     if (_lockEnabled) {
       final pinSet = await PinService.instance.isPinSet();
       if (!pinSet) _lockEnabled = false;
     }
   }
 
-  void _onUnlocked() {
-    setState(() => _unlocked = true);
-  }
+  void _onUnlocked() => setState(() => _unlocked = true);
 
   @override
   Widget build(BuildContext context) {
     if (!_ready) return const _SplashScreen();
-
-    // Show lock screen if enabled and not yet unlocked this session
     if (_lockEnabled && !_unlocked) {
       return AppLockScreen(onUnlocked: _onUnlocked);
     }
-
-    // Profile selection (handles no-profiles → setup flow)
     return const ProfileSelectionPage(isLaunchScreen: true);
   }
 }

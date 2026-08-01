@@ -79,6 +79,20 @@ class UserProvider extends ChangeNotifier {
   }
 
   // ════════════════════════════════════════
+  // REFRESH PROFILES — called by ProfileSelectionPage on every open
+  // Reloads the profile list from DB without changing the active profile
+  // ════════════════════════════════════════
+
+  Future<void> refreshProfiles() async {
+    try {
+      _profiles = await DatabaseService.instance.getAllProfiles();
+      notifyListeners();
+    } catch (e) {
+      print('❌ refreshProfiles: $e');
+    }
+  }
+
+  // ════════════════════════════════════════
   // CREATE PROFILE — called from ProfileSetupPage
   // ════════════════════════════════════════
 
@@ -241,34 +255,6 @@ class UserProvider extends ChangeNotifier {
   void clearError() {
     _error = null;
     notifyListeners();
-  }
-  // ════════════════════════════════════════
-  // REFRESH PROFILES
-  // Used by ProfileSelectionPage
-  // ════════════════════════════════════════
-
-  Future<void> refreshProfiles() async {
-    try {
-      _profiles = await DatabaseService.instance.getAllProfiles();
-
-      // If active profile still exists, keep it
-      if (_activeProfile != null) {
-        try {
-          _activeProfile = _profiles.firstWhere(
-            (p) => p.id == _activeProfile!.id,
-          );
-        } catch (_) {
-          // If deleted, fallback to first
-          _activeProfile = _profiles.isNotEmpty ? _profiles.first : null;
-        }
-      }
-
-      notifyListeners();
-
-      print('🔄 Profiles refreshed (${_profiles.length})');
-    } catch (e) {
-      print('❌ refreshProfiles error: $e');
-    }
   }
 
   // ════════════════════════════════════════
